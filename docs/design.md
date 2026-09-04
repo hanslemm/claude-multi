@@ -265,7 +265,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 | T18 | run from the repo path; then the script fed on stdin (`bash -s -- setup`) | self-installed copy at `~/.claude-multi/claude-multi-setup.sh`, identical, mode 755; the stdin run warns and leaves the copy identical |
 
 CI (`.github/workflows/ci.yml`): matrix `macos-latest` + `ubuntu-latest`; install zsh + shellcheck
-on ubuntu (`apt-get`) and shellcheck on macOS (`brew`); steps: `bash -n`, `shellcheck -s bash` on the
+on ubuntu (`apt-get`) and shellcheck on macOS (`brew`); steps: `bash -n`, `shellcheck -S warning -s bash` on the
 script and harness, `sh -n install.sh`, run the harness with `/bin/bash` and with `bash`.
 
 ## 11. Distribution

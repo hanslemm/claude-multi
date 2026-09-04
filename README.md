@@ -119,7 +119,7 @@ emails, or takes them from `add <email>` or the `ACCOUNT_ROWS` environment varia
 - `tests/harness.sh` — the test matrix (T1–T18 in the contract); builds a throwaway `HOME` per case
   with a stub `claude` and a stub `cswap`. Run it with `/bin/bash tests/harness.sh` (bash 3.2 on
   macOS) and with `bash tests/harness.sh`.
-- CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -s bash` on the script and
+- CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -S warning -s bash` on the script and
   the harness, `sh -n install.sh`, then the harness under both bash versions.
 - The contract is [`docs/design.md`](docs/design.md): flags, file formats, output shapes, safety
   invariants. When a file disagrees with it, the file is the bug.

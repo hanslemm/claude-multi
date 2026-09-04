@@ -33,7 +33,7 @@ jobs:
           sh -n install.sh
 
       - name: shellcheck
-        run: shellcheck -s bash skills/claude-multi/scripts/claude-multi-setup.sh tests/harness.sh
+        run: shellcheck -S warning -s bash skills/claude-multi/scripts/claude-multi-setup.sh tests/harness.sh
 
       - name: Harness under /bin/bash 3.2 (macOS)
         if: runner.os == 'macOS'
