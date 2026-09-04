@@ -1,0 +1,16 @@
+{
+  "name": "claude-multi",
+  "owner": {
+    "name": "Hans C. R. Lemm",
+    "url": "https://github.com/hanslemm"
+  },
+  "plugins": [
+    {
+      "name": "claude-multi",
+      "source": "./",
+      "description": "One Claude Code login per terminal: one CLAUDE_CONFIG_DIR per account, shared config, and claude-<slug> launchers.",
+      "version": "1.0.0",
+      "category": "productivity"
+    }
+  ]
+}

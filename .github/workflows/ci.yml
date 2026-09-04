@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zsh + shellcheck (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh shellcheck
+
+      - name: Install shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+
+      - name: Syntax check
+        run: |
+          bash -n skills/claude-multi/scripts/claude-multi-setup.sh
+          bash -n tests/harness.sh
+          sh -n install.sh
+
+      - name: shellcheck
+        run: shellcheck -s bash skills/claude-multi/scripts/claude-multi-setup.sh tests/harness.sh
+
+      - name: Harness under /bin/bash 3.2 (macOS)
+        if: runner.os == 'macOS'
+        run: /bin/bash tests/harness.sh
+
+      - name: Harness
+        run: tests/harness.sh

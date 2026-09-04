@@ -1,0 +1,19 @@
+{
+  "name": "claude-multi",
+  "description": "One Claude Code login per terminal: one CLAUDE_CONFIG_DIR per account, shared config, and claude-<slug> launchers.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Hans C. R. Lemm",
+    "url": "https://github.com/hanslemm"
+  },
+  "homepage": "https://github.com/hanslemm/claude-multi",
+  "repository": "https://github.com/hanslemm/claude-multi",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "accounts",
+    "multi-account",
+    "CLAUDE_CONFIG_DIR",
+    "cswap"
+  ]
+}
