@@ -9,7 +9,7 @@
       "name": "claude-multi",
       "source": "./",
       "description": "One Claude Code login per terminal: one CLAUDE_CONFIG_DIR per account, shared config, and claude-<slug> launchers.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "category": "productivity"
     }
   ]

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # claude-multi-setup.sh — one Claude Code login per terminal.
 #
-# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 of it).
+# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12 of it).
 #
 # Produces:
 #   ~/.claude-accounts/<slug>/          one CLAUDE_CONFIG_DIR per account (own login, own Keychain entry, own
 #                                       .claude.json). Never deleted by this script.
 #   ~/.claude-shared/                   settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/,
 #                                       output-styles/ — seeded ONCE by COPYING from ~/.claude, never overwritten.
-#   ~/.claude-multi/aliases.sh          claude-<slug> launchers, claude<N> slot aliases, cuse, cwho (zsh + bash)
+#   ~/.claude-multi/aliases.sh          claude-<slug> launchers, claude<N> slot aliases, cuse, cwho and the
+#                                       claude-multi umbrella function (zsh + bash)
 #   ~/.claude-multi/accounts.tsv        slot<TAB>email<TAB>slug registry; a slug never changes once assigned
 #   ~/.claude-multi/claude-multi-setup.sh   self-installed copy of this script (the stable path)
 #   <account>/projects/<repo>/memory -> ~/.claude/projects/<repo>/memory   per-repo auto-memory, shared
@@ -20,13 +21,22 @@
 # Discovery: $ACCOUNT_ROWS if set, else cswap (`list --json`, `export <tmp>`, ANSI-stripped `list`), then the
 # union with accounts.tsv rows that carry a slot, then an interactive prompt (reads /dev/tty), then an error.
 #
+# v1.1 (§12): `login <slug|slot|email>` / `login --all` runs `claude auth login --email …` under the account dir,
+# `status --verify` asks `claude auth status` per account, `update` replaces the installed copy from GitHub, and
+# setup/add end with interactive offers (append the rc line, log in to each account) when a terminal is there.
+#
+# Internal test hook: CLAUDE_MULTI_INPUT=<file> makes every interactive prompt (emails, rc offer, login offers)
+# read its answers line by line from that file instead of the terminal, and counts as "a terminal is available".
+# CLAUDE_MULTI_UPDATE_URL=<url> makes `update` download from that URL instead of GitHub (whoever controls the
+# environment already controls PATH, so this widens nothing).
+#
 # bash 3.2 + BSD/GNU userland. set -u, no set -e: every mutating command is checked explicitly.
 # Idempotent: a re-run with nothing new changes nothing (mtimes included).
 
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="2.0.0"
+VERSION="1.1.0"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -50,14 +60,19 @@ SLOT_RE='^[0-9]+$'
 SLUG_RE='^[a-z0-9][a-z0-9-]*$'   # a slug is a path component AND a shell function name: nothing else gets in
 TAB=$(printf '\t')
 
-CMD=""            # setup | add | remove | status
+CMD=""            # setup | add | remove | status | login | update
 EMAIL_ARG=""      # add/remove operand
 SLOT_ARG=""       # add --slot N
+LOGIN_ARG=""      # login operand: slug | slot | email
+LOGIN_ALL=0       # login --all
+VERIFY=0          # status --verify
 DRY_RUN=0
 RELINK=0
 RC_APPEND=0
 RC_FILE_ARG=""
 NO_INPUT=0
+UPDATE_REPO="hanslemm/claude-multi"
+UPDATE_PATH="skills/claude-multi/scripts/claude-multi-setup.sh"
 CHANGES=0
 WARNINGS=0
 TMP_DIR=""
@@ -85,15 +100,23 @@ usage:
   $SCRIPT_NAME [setup] [--dry-run] [--relink] [--rc[=FILE]] [--no-input]
   $SCRIPT_NAME add <email> [--slot N] [setup flags]
   $SCRIPT_NAME remove <email> [setup flags]
-  $SCRIPT_NAME status
+  $SCRIPT_NAME status [--verify]
+  $SCRIPT_NAME login <slug|slot|email> | --all
+  $SCRIPT_NAME update [--dry-run]
   $SCRIPT_NAME --help | -h | --version
 
 commands:
   setup          (default) discover accounts, seed ~/.claude-shared, create one CLAUDE_CONFIG_DIR per
-                 account under ~/.claude-accounts, write accounts.tsv + aliases.sh, self-install, summary
+                 account under ~/.claude-accounts, write accounts.tsv + aliases.sh, self-install, summary;
+                 in a terminal it then offers to append the rc line and to log in to each account
   add <email>    register an account (slot N, or the lowest free slot), then run setup
   remove <email> forget an account (its dir and login are kept), then run setup
   status         read-only report: paths, cswap, this terminal, every account's login state, next step
+                 --verify asks 'claude auth status' under each account dir instead of the .claude.json heuristic
+  login <acct>   run 'claude auth login --email <email>' under that account's dir (opens the browser; needs a
+                 terminal); --all does it for every account that is not logged in, in slot order
+  update         download the latest script from GitHub into ~/.claude-multi (CLAUDE_MULTI_REF picks a branch
+                 or tag), then run setup --no-input so aliases.sh gains any new functions
 
 flags:
   --dry-run      print every change as '[dry-run] would …'; create nothing
@@ -180,9 +203,70 @@ link_memory_into() { # account-dir — every repo whose auto-memory exists in ~/
   done
 }
 
-logged_in() { # slug
+logged_in() { # slug — the .claude.json heuristic (no network, no claude binary needed)
   local f="$ACCOUNTS_ROOT/$1/.claude.json"
   [ -f "$f" ] && grep -q '"oauthAccount"' -- "$f" 2>/dev/null
+}
+
+# ---------- claude auth (§12.2 / §12.3): every call runs under the account dir, with the three credential ----------
+# ---------- variables unset so the CLI looks at that directory's login and nothing else ----------
+claude_in_path() { command -v claude >/dev/null 2>&1; }
+run_as_account() { # slug cmd args… — stdio inherited (the CLI's own URL and prompts must reach the user)
+  local slug="$1"; shift
+  (
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+    export CLAUDE_CONFIG_DIR="$ACCOUNTS_ROOT/$slug"
+    "$@"
+  )
+}
+auth_status_json() { # slug → the `claude auth status` JSON on stdout ('' when the call fails)
+  # a missing dir holds no login — and the CLI would create it (mode 755, with a .claude.json) just to say so
+  [ -d "$ACCOUNTS_ROOT/$1" ] || return 1
+  run_as_account "$1" claude auth status 2>/dev/null < /dev/null
+}
+json_logged_in() { grep -q '"loggedIn"[[:space:]]*:[[:space:]]*true' ; }     # stdin: the JSON
+json_email() { sed -n 's/.*"email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1; }   # stdin: the JSON
+verified_logged_in() { auth_status_json "$1" | json_logged_in; }   # slug
+
+account_state_line() { # slot slug email [verified] → 'account: …' exactly as status prints it (§8 / §12.3)
+  local state
+  if [ "${4:-}" = verified ]; then
+    if verified_logged_in "$2"; then state='logged-in (verified)'; else state='not-logged-in (verified)'; fi
+  elif logged_in "$2"; then state=logged-in
+  else state=not-logged-in
+  fi
+  printf 'account: %s %s %s %s\n' "$1" "$2" "$3" "$state"
+}
+
+# The one login procedure (§12.2): claude auth login --email <email> under the account dir, then claude auth status.
+login_account() { # slot slug email → 0 logged in, 1 the login did not complete
+  local slot="$1" slug="$2" email="$3" dir rc json other
+  dir="$ACCOUNTS_ROOT/$slug"
+  if [ ! -d "$dir" ]; then
+    { mkdir -p -- "$dir" && chmod 700 "$dir"; } || die "cannot create $dir"
+  fi
+  say "Logging in to $email — CLAUDE_CONFIG_DIR=$dir (the browser opens; finish the login there):"
+  # stdin is the pipe on the `curl … | sh` path (install.sh execs this script); the CLI's paste-code fallback
+  # reads stdin, so give it the terminal when there is one and stdin is not it
+  if ! [ -t 0 ] && ( : < /dev/tty ) 2>/dev/null; then
+    run_as_account "$slug" claude auth login --email "$email" < /dev/tty; rc=$?
+  else
+    run_as_account "$slug" claude auth login --email "$email"; rc=$?
+  fi
+  if [ $rc != 0 ]; then
+    say "login did not complete for $email (claude auth login exited $rc)"
+    return 1
+  fi
+  json=$(auth_status_json "$slug")
+  if printf '%s' "$json" | json_logged_in; then
+    say "logged in as $email"
+    other=$(printf '%s' "$json" | json_email)
+    [ -n "$other" ] && [ "$other" != "$email" ] && warn "logged in as $other, expected $email"
+  else
+    warn "claude auth login exited 0 but claude auth status reports no login for $email"
+  fi
+  account_state_line "$slot" "$slug" "$email" verified
+  return 0
 }
 
 # ---------- shared config (seeded once, never overwritten) ----------
@@ -553,25 +637,44 @@ EOF
 }
 
 # ---------- interactive prompt (step 4 of §4) ----------
-prompt_allowed() { # → 0 when a prompt may be shown; sets PROMPT_IN (tty|stdin)
+prompt_allowed() { # → 0 when a prompt may be shown; sets PROMPT_IN (file|tty|stdin)
   [ "$NO_INPUT" = 1 ] && return 1
+  if [ -n "${CLAUDE_MULTI_INPUT:-}" ]; then PROMPT_IN="file"; return 0; fi   # internal test hook (header)
   if ( : < /dev/tty ) 2>/dev/null; then PROMPT_IN="tty"; return 0; fi
   if [ -t 0 ]; then PROMPT_IN="stdin"; return 0; fi
   return 1
 }
 PROMPT_IN=""
+INPUT_FD_OPEN=0
+ANSWER=""
+ask() { # prompt-text → ANSWER (rc 1 on EOF). Every interactive prompt goes through here (§4 step 4, §12.4).
+  local rc
+  ANSWER=""
+  case "$PROMPT_IN" in
+    file) # answers consumed line by line across prompts: one descriptor, opened once
+      if [ "$INPUT_FD_OPEN" = 0 ]; then
+        exec 3< "$CLAUDE_MULTI_INPUT" || return 1
+        INPUT_FD_OPEN=1
+      fi
+      read -r ANSWER <&3; rc=$?
+      # at EOF nothing is asked; otherwise prompt + answer are echoed so the transcript reads like a terminal session
+      { [ $rc = 0 ] || [ -n "$ANSWER" ]; } && printf '%s%s\n' "$1" "$ANSWER" ;;
+    tty)
+      printf '%s' "$1" > /dev/tty
+      read -r ANSWER < /dev/tty; rc=$? ;;
+    *)
+      printf '%s' "$1" >&2
+      read -r ANSWER; rc=$? ;;
+  esac
+  [ $rc = 0 ] || [ -z "$ANSWER" ] || rc=0   # a last line without a newline is still an answer
+  return $rc
+}
 prompt_rows() { # asks for emails until an empty line; fills SLOTS/EMAILS/SLUGS with slots 1..n
-  local n=1 line rc
+  local n=1 line
   say "Enter the email of each Claude account, one per line; empty line to finish:"
   while :; do
-    if [ "$PROMPT_IN" = tty ]; then
-      printf '  %s> ' "$n" > /dev/tty
-      read -r line < /dev/tty; rc=$?
-    else
-      printf '  %s> ' "$n" >&2
-      read -r line; rc=$?
-    fi
-    [ $rc = 0 ] || { say ""; break; }
+    ask "  $n> " || { say ""; break; }
+    line=$ANSWER
     line=${line#"${line%%[! ]*}"}; line=${line%"${line##*[! ]}"}   # trim spaces
     [ -n "$line" ] || break
     if ! [[ "$line" =~ $EMAIL_RE ]]; then note "not an email: $line"; continue; fi
@@ -695,6 +798,11 @@ gen_aliases() { # → stdout
 #                           and scripts use that account too (they do not get the shared-config flags)
 #   cuse default            unpin: back to ~/.claude, whatever the default login is
 #   cwho                    which account this terminal is on, and the full list with login state
+#   claude-multi <verb>     umbrella: use/who (= cuse/cwho, in THIS shell), help, and add | remove | status |
+#                           login | update | setup | relink … passed to ~/.claude-multi/claude-multi-setup.sh
+#
+# cuse also exports CLAUDE_MULTI_ACCOUNT=<slug> (for a prompt: \${CLAUDE_MULTI_ACCOUNT:+[\$CLAUDE_MULTI_ACCOUNT] });
+# cuse default unsets it. Sourcing this file sets neither variable.
 
 CLAUDE_MULTI_ACCOUNTS_ROOT="\$HOME/.claude-accounts"
 CLAUDE_MULTI_SHARED_DIR="\$HOME/.claude-shared"
@@ -741,7 +849,7 @@ _claude_multi_list() {
     if _claude_multi_logged_in "$slug"; then
       state='logged in'
     else
-      state="NOT logged in → run claude-$slug and /login once"
+      state="NOT logged in → run claude-multi login $slug"
     fi
     mark=' '
     [ "${CLAUDE_CONFIG_DIR:-}" = "$CLAUDE_MULTI_ACCOUNTS_ROOT/$slug" ] && mark='*'
@@ -782,7 +890,7 @@ cuse() { # <slug|slot|default>
   fi
   case "$want" in
     default | off | -)
-      unset CLAUDE_CONFIG_DIR
+      unset CLAUDE_CONFIG_DIR CLAUDE_MULTI_ACCOUNT
       printf '%s\n' 'This terminal: default (~/.claude)'
       return 0 ;;
   esac
@@ -794,8 +902,9 @@ cuse() { # <slug|slot|default>
   fi
   slot=${line%% *}; rest=${line#* }; slug=${rest%% *}; email=${rest#* }
   export CLAUDE_CONFIG_DIR="$CLAUDE_MULTI_ACCOUNTS_ROOT/$slug"
+  export CLAUDE_MULTI_ACCOUNT="$slug"
   printf '%s\n' "This terminal: $slug ($email)  CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"
-  _claude_multi_logged_in "$slug" || printf '%s\n' "  not logged in yet: run  claude-$slug  and complete /login once"
+  _claude_multi_logged_in "$slug" || printf '%s\n' "  not logged in yet: run  claude-multi login $slug"
   [ -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && printf '%s\n' "  note: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN is set in this shell — bare 'claude' will use it over the login; claude-$slug unsets them"
   return 0
 }
@@ -820,6 +929,41 @@ cwho() {
   [ -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && printf '%s\n' "  note: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN is set in this shell — bare 'claude' uses it over the login; the claude-<slug> launchers unset them"
   _claude_multi_list
   return 0
+}
+
+claude-multi() { # <verb> [args…] — a function, so `use` can change THIS shell's environment
+  local verb="${1:-help}"
+  case "$verb" in
+    use) shift; cuse "$@" ;;
+    who) cwho ;;
+    help | -h | --help)
+      printf '%s\n' \
+        'claude-multi <verb> [args…] — one Claude Code login per terminal' \
+        '' \
+        '  use <slug|slot>       pin this terminal to that account (exports CLAUDE_CONFIG_DIR + CLAUDE_MULTI_ACCOUNT)' \
+        '  use default           unpin: back to ~/.claude' \
+        '  who                   which account this terminal is on, and every account with its login state' \
+        '  status [--verify]     read-only report; --verify asks claude auth status per account' \
+        '  login <slug|slot|email> | --all   log in to that account (opens the browser), or every account not yet logged in' \
+        '  add <email> [--slot N]            register an account and create its dir + launcher' \
+        '  remove <email>        forget an account (its dir and login are kept)' \
+        '  setup [--dry-run] [--rc[=FILE]] [--no-input]   re-run the setup (discover, seed, link, aliases)' \
+        '  relink                only (re)create the shared + memory symlinks (= setup --relink)' \
+        '  update [--dry-run]    fetch the latest claude-multi-setup.sh from GitHub and re-run setup' \
+        '  help                  this table' \
+        '' \
+        "  launchers: claude-<slug> [args…] (or claude<slot>) run Claude Code as that account for one command." \
+        "  script: $CLAUDE_MULTI_SETUP"
+      return 0 ;;
+    *)
+      if [ ! -x "$CLAUDE_MULTI_SETUP" ]; then
+        printf '%s\n' "claude-multi: $CLAUDE_MULTI_SETUP is missing — re-run the setup script (or install.sh)" >&2
+        return 1
+      fi
+      if [ "$verb" = relink ]; then shift; "$CLAUDE_MULTI_SETUP" setup --relink "$@"
+      else "$CLAUDE_MULTI_SETUP" "$@"
+      fi ;;
+  esac
 }
 
 BODY
@@ -931,6 +1075,11 @@ handle_rc() {
     RC_STATE="sourced from $found$(rc_login_shell_note "$found")"
     return 0
   fi
+  # the §12.4 offer follows the summary under exactly these conditions: say so instead of "add it by hand"
+  if ! dry && { [ "$CMD" = setup ] || [ "$CMD" = add ]; } && prompt_allowed; then
+    RC_STATE="not sourced yet (asked below)"
+    return 0
+  fi
   RC_STATE="NOT touched. Add this line to $target (or re-run with --rc), then open a new terminal or run: . $ALIASES_FILE — the claude-<slug> launchers, cuse and cwho exist only after that:
     $RC_LINE"
 }
@@ -969,9 +1118,9 @@ summary() {
   i=0
   while [ $i -lt ${#SLOTS[@]} ]; do
     if logged_in "${SLUGS[$i]}"; then
-      printf "  claude-%-${slugw}s  (already logged in)\n" "${SLUGS[$i]}"
+      printf "  claude-multi login %-${slugw}s  (already logged in)\n" "${SLUGS[$i]}"
     else
-      printf "  claude-%-${slugw}s  then /login as %s\n" "${SLUGS[$i]}" "${EMAILS[$i]}"
+      printf "  claude-multi login %-${slugw}s  (%s)\n" "${SLUGS[$i]}" "${EMAILS[$i]}"
     fi
     i=$((i + 1))
   done
@@ -980,7 +1129,7 @@ summary() {
 
 # ---------- status (§8): read-only, no discovery, no network ----------
 cmd_status() {
-  local i target cur slug state next="" first_missing="" order
+  local i target cur slug state next="" first_missing="" order verified line
   printf 'script: %s\n' "$SCRIPT_PATH"
   printf 'version: %s\n' "$VERSION"
   if target=$(command -v cswap 2>/dev/null); then printf 'cswap: found at %s\n' "$target"; else printf 'cswap: not found (manual account list)\n'; fi
@@ -1005,6 +1154,12 @@ cmd_status() {
     esac
   fi
   printf 'terminal: %s\n' "$state"
+  verified=""
+  if [ "$VERIFY" = 1 ]; then
+    if claude_in_path; then verified=verified
+    else warn "claude not in PATH; login states are the .claude.json heuristic"
+    fi
+  fi
   order=""
   i=0
   while [ $i -lt ${#REG_EMAILS[@]} ]; do
@@ -1014,18 +1169,210 @@ cmd_status() {
   done
   while read -r slug i; do
     [ -n "$slug" ] || continue
-    if logged_in "${REG_SLUGS[$i]}"; then state=logged-in; else state=not-logged-in; [ -n "$first_missing" ] || first_missing=${REG_SLUGS[$i]}; fi
-    printf 'account: %s %s %s %s\n' "${REG_SLOTS[$i]}" "${REG_SLUGS[$i]}" "${REG_EMAILS[$i]}" "$state"
+    line=$(account_state_line "${REG_SLOTS[$i]}" "${REG_SLUGS[$i]}" "${REG_EMAILS[$i]}" "$verified")
+    printf '%s\n' "$line"
+    case "$line" in *" not-logged-in" | *" not-logged-in (verified)") [ -n "$first_missing" ] || first_missing=${REG_SLUGS[$i]} ;; esac
     next="set"
   done <<EOF
 $(printf '%s' "$order" | sort -n)
 EOF
   if [ -z "$next" ]; then next="run setup"
   elif [ ! -f "$ALIASES_FILE" ]; then next="run setup"
-  elif [ -n "$first_missing" ]; then next="run claude-$first_missing and /login"
+  elif [ -n "$first_missing" ]; then next="run claude-multi login $first_missing"
   else next="all accounts logged in"
   fi
   printf 'next: %s\n' "$next"
+  return 0
+}
+
+# ---------- login (§12.2): registry rows with a slot, in slot order ----------
+LOGIN_SLOTS=()
+LOGIN_SLUGS=()
+LOGIN_EMAILS=()
+load_login_accounts() { # → LOGIN_* from the registry, slot order
+  local i order s
+  LOGIN_SLOTS=(); LOGIN_SLUGS=(); LOGIN_EMAILS=()
+  load_registry
+  order=""
+  i=0
+  while [ $i -lt ${#REG_EMAILS[@]} ]; do
+    [ -n "${REG_SLOTS[$i]}" ] && order="$order${REG_SLOTS[$i]} $i
+"
+    i=$((i + 1))
+  done
+  [ -n "$order" ] || return 0
+  while read -r s i; do
+    [ -n "$i" ] || continue
+    LOGIN_SLOTS[${#LOGIN_SLOTS[@]}]=${REG_SLOTS[$i]}
+    LOGIN_SLUGS[${#LOGIN_SLUGS[@]}]=${REG_SLUGS[$i]}
+    LOGIN_EMAILS[${#LOGIN_EMAILS[@]}]=${REG_EMAILS[$i]}
+  done <<EOF
+$(printf '%s' "$order" | sort -n)
+EOF
+}
+login_account_list() { # → stderr: one line per registered account, for the "no account" error
+  local i=0
+  if [ ${#LOGIN_SLOTS[@]} = 0 ]; then
+    printf '  (no accounts registered — run: %s add <email>)\n' "$(self_cmd)" >&2
+    return 0
+  fi
+  printf '  registered accounts (slot · slug · email):\n' >&2
+  while [ $i -lt ${#LOGIN_SLOTS[@]} ]; do
+    printf '    %s  %s  %s\n' "${LOGIN_SLOTS[$i]}" "${LOGIN_SLUGS[$i]}" "${LOGIN_EMAILS[$i]}" >&2
+    i=$((i + 1))
+  done
+}
+login_index_for() { # slug|slot|email → index, rc 1 if unknown
+  local i=0
+  while [ $i -lt ${#LOGIN_SLOTS[@]} ]; do
+    if [ "${LOGIN_SLUGS[$i]}" = "$1" ] || [ "${LOGIN_SLOTS[$i]}" = "$1" ] || [ "${LOGIN_EMAILS[$i]}" = "$1" ]; then
+      printf '%s' "$i"; return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+login_needs_terminal() { # exit 2 unless a login can be run interactively (§12.2)
+  prompt_allowed && return 0
+  printf 'error: login opens a browser and needs a terminal; run: claude-multi login <slug>\n' >&2
+  exit 2
+}
+
+cmd_login() {
+  local i idx line wanted done_any=0
+  load_login_accounts
+  if [ "$LOGIN_ALL" = 0 ]; then
+    if ! idx=$(login_index_for "$LOGIN_ARG"); then
+      printf "error: no account '%s'\\n" "$LOGIN_ARG" >&2
+      login_account_list
+      exit 1
+    fi
+  fi
+  claude_in_path || die "'claude' is not in PATH — install Claude Code (or open a terminal where it is) and re-run: $(self_cmd) login ${LOGIN_ARG:---all}"
+  login_needs_terminal
+  if dry; then   # a login opens the browser: under --dry-run only say what would run
+    say "claude-multi login (dry-run — nothing will be changed)"
+    i=0
+    while [ $i -lt ${#LOGIN_SLOTS[@]} ]; do
+      if [ "$LOGIN_ALL" = 1 ]; then wanted=$(! verified_logged_in "${LOGIN_SLUGS[$i]}" && echo 1 || echo 0)
+      elif [ "$i" = "$idx" ]; then wanted=1
+      else wanted=0
+      fi
+      [ "$wanted" = 1 ] && did "run claude auth login --email ${LOGIN_EMAILS[$i]} with CLAUDE_CONFIG_DIR=$ACCOUNTS_ROOT/${LOGIN_SLUGS[$i]}"
+      i=$((i + 1))
+    done
+    return 0
+  fi
+  if [ "$LOGIN_ALL" = 0 ]; then
+    login_account "${LOGIN_SLOTS[$idx]}" "${LOGIN_SLUGS[$idx]}" "${LOGIN_EMAILS[$idx]}" || exit 1
+    return 0
+  fi
+  # --all: every account whose VERIFIED state (claude auth status) is not-logged-in, in slot order, stopping at
+  # the first failure. The .claude.json heuristic is not consulted: a stale oauthAccount must not hide a missing
+  # login (claude is known to be in PATH here). A skipped account prints the state that skipped it.
+  i=0
+  while [ $i -lt ${#LOGIN_SLOTS[@]} ]; do
+    line=$(account_state_line "${LOGIN_SLOTS[$i]}" "${LOGIN_SLUGS[$i]}" "${LOGIN_EMAILS[$i]}" verified)
+    case "$line" in
+      *" not-logged-in (verified)") login_account "${LOGIN_SLOTS[$i]}" "${LOGIN_SLUGS[$i]}" "${LOGIN_EMAILS[$i]}" || exit 1; done_any=1 ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+    i=$((i + 1))
+  done
+  [ ${#LOGIN_SLOTS[@]} -gt 0 ] || { say "no accounts registered — run: $(self_cmd) add <email>"; return 0; }
+  [ "$done_any" = 1 ] || say "all accounts logged in"
+  return 0
+}
+
+# ---------- interactive offers after the summary of setup / add (§12.4) ----------
+offer_interactive() {
+  local target i asked=0
+  dry && return 0
+  case "$CMD" in setup | add) ;; *) return 0 ;; esac
+  prompt_allowed || return 0
+  # 1. the rc line, when it is nowhere yet and --rc was not given (that case was handled above)
+  if [ "$RC_APPEND" = 0 ] && ! rc_found >/dev/null && target=$(rc_target); then
+    say ""
+    if ask "Append the source line to $target? [y/N] "; then
+      case "$ANSWER" in
+        y | Y | yes)
+          did "append the source line to $target"
+          printf '\n%s\n' "$RC_LINE" >> "$target" || die "cannot append to $target"
+          rc_remember "$target" || die "cannot write $RC_MEMO_FILE"
+          say "source line appended to $target (open a new terminal, or: . $ALIASES_FILE)$(rc_login_shell_note "$target")" ;;
+        *) say "rc file not touched. Add this line yourself (or re-run with --rc):"; note "$RC_LINE" ;;
+      esac
+    else
+      say ""
+      return 0   # EOF: stop asking
+    fi
+  fi
+  # 2. one login offer per account that is not logged in, slot order; EOF stops asking
+  i=0
+  while [ $i -lt ${#SLOTS[@]} ]; do
+    if ! logged_in "${SLUGS[$i]}"; then
+      if ! claude_in_path; then
+        note "'claude' is not in PATH here, so the logins cannot be offered; run  $(self_cmd) login --all  where it is"
+        return 0
+      fi
+      [ $asked = 1 ] || say ""
+      asked=1
+      ask "Log in to ${EMAILS[$i]} now? [Y/n] " || { say ""; return 0; }
+      case "$ANSWER" in
+        '' | y | Y | yes) login_account "${SLOTS[$i]}" "${SLUGS[$i]}" "${EMAILS[$i]}" || note "(later: $(self_cmd) login ${SLUGS[$i]})" ;;
+        *) note "skipped ${EMAILS[$i]} (later: $(self_cmd) login ${SLUGS[$i]})" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+}
+
+# ---------- update (§12.5): replace ~/.claude-multi/claude-multi-setup.sh from GitHub ----------
+cmd_update() {
+  local ref url new old_ver new_ver
+  ref=${CLAUDE_MULTI_REF:-main}
+  # a plain branch or tag name only (as install.sh): `..` would fetch a file from another repository
+  case "$ref" in
+    '' | *..* | /* | *[!A-Za-z0-9._/-]*) die "bad CLAUDE_MULTI_REF $ref (expected a branch or tag name)" ;;
+  esac
+  url=${CLAUDE_MULTI_UPDATE_URL:-https://raw.githubusercontent.com/$UPDATE_REPO/$ref/$UPDATE_PATH}
+  mk_tmp
+  new="$TMP_DIR/$SCRIPT_NAME"
+  note "downloading $url"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$new" || die "download of $url failed (curl)"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$url" > "$new" || die "download of $url failed (wget)"
+  else
+    die "neither curl nor wget is installed; install one of them, or download $url to $INSTALL_PATH by hand"
+  fi
+  [ -s "$new" ] || die "download of $url produced an empty file (wrong CLAUDE_MULTI_REF?); installed copy untouched"
+  # the last line is `main "$@"`: a download cut at any earlier statement boundary still carries the SCRIPT_NAME
+  # line and passes bash -n, but would install a script that defines everything and runs nothing
+  if ! grep -q '^SCRIPT_NAME="claude-multi-setup.sh"$' -- "$new" || [ "$(tail -n 1 "$new")" != 'main "$@"' ] \
+     || ! "${BASH:-bash}" -n "$new" 2>/dev/null; then
+    die "downloaded file is not claude-multi-setup.sh; installed copy untouched"
+  fi
+  new_ver=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$new" | head -n 1); [ -n "$new_ver" ] || new_ver="unknown"
+  if [ -f "$INSTALL_PATH" ]; then
+    old_ver=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$INSTALL_PATH" | head -n 1); [ -n "$old_ver" ] || old_ver="unknown"
+    if cmp -s -- "$new" "$INSTALL_PATH"; then say "already up to date ($new_ver)"; return 0; fi
+  else
+    old_ver="none"
+  fi
+  did "update $INSTALL_PATH $old_ver → $new_ver"
+  if dry; then
+    say "  [dry-run] would then run: $INSTALL_PATH setup --no-input"
+    return 0
+  fi
+  ensure_dir "$MULTI_DIR" 755
+  { cp -- "$new" "$INSTALL_PATH.tmp" && chmod 755 "$INSTALL_PATH.tmp" && mv -f -- "$INSTALL_PATH.tmp" "$INSTALL_PATH"; } \
+    || die "cannot install to $INSTALL_PATH"
+  say "updated $INSTALL_PATH: $old_ver → $new_ver; running setup so aliases.sh gains any new functions"
+  say ""
+  "$INSTALL_PATH" setup --no-input || return $?
+  say ""
+  say "reload the launchers in this terminal: . $ALIASES_FILE  (new terminals pick them up from the rc line)"
   return 0
 }
 
@@ -1038,17 +1385,20 @@ parse_args() {
       --rc) RC_APPEND=1 ;;
       --rc=*) RC_APPEND=1; RC_FILE_ARG=${1#--rc=} ;;
       --no-input) NO_INPUT=1 ;;
+      --all) LOGIN_ALL=1 ;;
+      --verify) VERIFY=1 ;;
       --slot) shift; [ $# -gt 0 ] || usage_err "--slot needs a number"; SLOT_ARG=$1 ;;
       --slot=*) SLOT_ARG=${1#--slot=} ;;
       -h | --help) usage; exit 0 ;;
-      --version) printf '%s %s\n' "$SCRIPT_NAME" "$VERSION"; exit 0 ;;
+      --version) printf '%s\n' "$VERSION"; exit 0 ;;
       -*) usage_err "unknown option: $1" ;;
-      setup | add | remove | status)
+      setup | add | remove | status | login | update)
         [ -z "$CMD" ] || usage_err "unexpected argument: $1"
         CMD=$1 ;;
       *)
         case "$CMD" in
           add | remove) [ -z "$EMAIL_ARG" ] || usage_err "unexpected argument: $1"; EMAIL_ARG=$1 ;;
+          login) [ -z "$LOGIN_ARG" ] || usage_err "unexpected argument: $1"; LOGIN_ARG=$1 ;;
           *) usage_err "unexpected argument: $1" ;;
         esac ;;
     esac
@@ -1061,7 +1411,19 @@ parse_args() {
       [[ "$EMAIL_ARG" =~ $EMAIL_RE ]] || usage_err "not an email: $EMAIL_ARG"
       [ "$RELINK" = 0 ] || usage_err "--relink cannot be combined with $CMD"
       [ "$CMD" = remove ] && REMOVED_EMAIL=$EMAIL_ARG ;;   # excluded from discovery below, even if cswap lists it
+    login)
+      if [ "$LOGIN_ALL" = 1 ]; then [ -z "$LOGIN_ARG" ] || usage_err "login takes either <slug|slot|email> or --all, not both"
+      elif [ -z "$LOGIN_ARG" ]; then
+        # no account named and no terminal: the §12.2 message is more useful than a usage line
+        login_needs_terminal
+        usage_err "login needs <slug|slot|email> or --all"
+      fi
+      [ "$RELINK" = 0 ] || usage_err "--relink cannot be combined with login" ;;
+    update)
+      [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "update only takes --dry-run" ;;
   esac
+  [ "$LOGIN_ALL" = 0 ] || [ "$CMD" = login ] || usage_err "--all only applies to login"
+  [ "$VERIFY" = 0 ] || [ "$CMD" = status ] || usage_err "--verify only applies to status"
   if [ -n "$SLOT_ARG" ]; then
     [ "$CMD" = add ] || usage_err "--slot only applies to add"
     [[ "$SLOT_ARG" =~ $SLOT_RE ]] && [ "$SLOT_ARG" -ge 1 ] || usage_err "--slot needs a number ≥ 1, got '$SLOT_ARG'"
@@ -1134,14 +1496,19 @@ cmd_setup() { # also the second half of add / remove
   self_install
   handle_rc
   summary
+  offer_interactive
 }
 
 main() {
   parse_args "$@"
   case "$CMD" in
     status) cmd_status; exit 0 ;;
+    login) cmd_login; exit 0 ;;
   esac
   if dry; then say "claude-multi $CMD (dry-run — nothing will be changed)"; else say "claude-multi $CMD"; fi
+  case "$CMD" in
+    update) cmd_update; return $? ;;
+  esac
   if [ "$RELINK" = 1 ]; then cmd_relink; return 0; fi
   cmd_setup
 }

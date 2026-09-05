@@ -72,7 +72,9 @@ mode 600 because user-scope MCP servers carry `headers` / `env` tokens and `~/.c
 claude-multi-setup.sh [setup] [--dry-run] [--relink] [--rc[=FILE]] [--no-input]
 claude-multi-setup.sh add <email> [--slot N] [setup flags]
 claude-multi-setup.sh remove <email> [setup flags]
-claude-multi-setup.sh status
+claude-multi-setup.sh status [--verify]
+claude-multi-setup.sh login <slug|slot|email> | --all        (v1.1, §12)
+claude-multi-setup.sh update [--dry-run]                     (v1.1, §12)
 claude-multi-setup.sh --help | -h | --version
 ```
 
@@ -179,7 +181,7 @@ Contents:
 - `_claude_multi_list`: header `Accounts (slot · launcher · email · login):` then one line per
   account: `  <mark> <slot>  claude-<slug padded>  <email padded>  <state>` where `<mark>` is `*`
   for the account this terminal is pinned to else a space, and `<state>` is `logged in` or
-  `NOT logged in → run claude-<slug> and /login once`.
+  `NOT logged in → run claude-multi login <slug>`.
 - `_claude_multi_run <slug> [args…]`: resolves the real binary (`whence -p claude` in zsh,
   `type -P claude` in bash; error 127 if absent), errors 1 if the account dir is missing (naming
   `$CLAUDE_MULTI_SETUP`), then in a subshell: `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN`,
@@ -187,7 +189,7 @@ Contents:
   `exec "$bin" --mcp-config "$SHARED/mcp.json" --settings "$SHARED/settings.json" "$@"`.
 - `claude-<slug>() { _claude_multi_run <slug> "$@"; }` per account; `alias claude<slot>='claude-<slug>'`.
 - `cuse <slug|slot>`: exports `CLAUDE_CONFIG_DIR` to the account dir and prints
-  `This terminal: <slug> (<email>)  CLAUDE_CONFIG_DIR=<dir>`; adds `  not logged in yet: run  claude-<slug>  and complete /login once`
+  `This terminal: <slug> (<email>)  CLAUDE_CONFIG_DIR=<dir>`; adds `  not logged in yet: run  claude-multi login <slug>`
   when applicable and a note when `ANTHROPIC_API_KEY` (or one of the two other credential variables)
   is set. `cuse default|off|-` unsets the
   variable and prints `This terminal: default (~/.claude)`. No argument → usage on stderr, list on
@@ -224,14 +226,14 @@ Contents:
   stderr; the counter line `No changes — everything was already in place.` when nothing changed.
 - Summary (setup): `Accounts (source: <source>):` + one `  <slot>  claude-<slug>  <email>  <dir>`
   line each; `Shared config: …`; `Shared memory: …`; `Aliases: …`; `rc file: …`; then
-  `One-time login, once per account …:` with `  claude-<slug>  then /login as <email>` or
+  `One-time login, once per account …:` with `  claude-multi login <slug>  (<email>)` or
   `(already logged in)`.
 - `status` lines, each `key: value` on its own line, in this order: `script:`, `version:`, `cswap:`
   (`found at <path>` | `not found (manual account list)`), `shared:` (`ok <dir>` | `missing`),
   `aliases:` (`ok <file>` | `missing`), `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
   `terminal:` (`default` | `<slug> (<email>)` | `unmanaged <dir>`), then
   `account: <slot> <slug> <email> <logged-in|not-logged-in>` per registered account, then
-  `next: <one sentence>` (e.g. `run claude-<slug> and /login` for the first not-logged-in account,
+  `next: <one sentence>` (e.g. `run claude-multi login <slug>` for the first not-logged-in account,
   `all accounts logged in` otherwise, or `run setup` when nothing is registered).
 
 ## 9. Safety invariants
@@ -288,3 +290,114 @@ script and harness, `sh -n install.sh`, run the harness with `/bin/bash` and wit
   Claude cannot) → `status` → daily usage explained. Script path: `${CLAUDE_SKILL_DIR}/scripts/…`,
   falling back to `scripts/claude-multi-setup.sh` next to `SKILL.md` when the placeholder is not
   substituted (other harnesses).
+
+## 12. v1.1 additions — convenience layer
+
+One version number everywhere: `VERSION` in the script, `version` in both `.claude-plugin/*.json`, and
+the git tag (`v1.1.0`). The script's `--version` prints it bare.
+
+### 12.1 `claude-multi` umbrella command (in `aliases.sh`, both shells)
+
+`claude-multi <verb> [args…]` is a shell function, so it can change the caller's environment:
+
+| Verb | Does |
+|---|---|
+| `use <slug\|slot>` / `use default` | exactly `cuse …` |
+| `who` | exactly `cwho` |
+| `add`, `remove`, `status`, `login`, `update`, `setup`, `relink`, `--dry-run`, … | `"$CLAUDE_MULTI_SETUP" "$@"` (every other argument list is passed through verbatim; `relink` maps to `setup --relink`) |
+| `help`, `-h`, `--help`, no argument | prints the verb table above on stdout, exit 0 |
+
+`cuse` additionally exports `CLAUDE_MULTI_ACCOUNT=<slug>`; `cuse default` unsets it together with
+`CLAUDE_CONFIG_DIR`. Sourcing `aliases.sh` never sets either. The README shows a prompt snippet
+(`${CLAUDE_MULTI_ACCOUNT:+[$CLAUDE_MULTI_ACCOUNT] }`) and a Claude Code `statusLine` hint that reads the
+basename of `CLAUDE_CONFIG_DIR`.
+
+### 12.2 `login <slug|slot|email>` and `login --all`
+
+Resolves the account from `accounts.tsv` (unknown → `error: no account '<x>'` + the list, exit 1).
+Needs `claude` in PATH (else exit 1 naming it) and a terminal: with `--no-input`, or when neither stdin
+is a tty nor `/dev/tty` opens, it exits 2 with `error: login opens a browser and needs a terminal; run:
+claude-multi login <slug>`. Otherwise it runs, in a subshell with `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` unset and `CLAUDE_CONFIG_DIR=<account dir>`:
+
+```
+claude auth login --email <email>
+```
+
+(stdout/stderr inherited, and stdin too when it is a terminal; when stdin is not a terminal but `/dev/tty`
+opens — the `curl … | sh` install path, where `install.sh` execs the script with the drained pipe on fd 0 —
+the login reads `/dev/tty`, so the CLI's own URL and paste-code prompt reach the user). On exit 0 it then runs
+`claude auth status` the same way and reports `logged in as <email>` when the JSON has `"loggedIn": true`
+(and, when the JSON carries an email, warns if it is a different one: `warning: logged in as <other>,
+expected <email>`); on a non-zero login exit it prints `login did not complete for <email>` and exits 1.
+`--all` does this for every account whose **verified** state (`claude auth status`, §12.3) is `not-logged-in`,
+in slot order, stopping at the first failure; the `.claude.json` heuristic is not consulted, so a stale
+`oauthAccount` cannot hide a missing login. The account's login state line is printed after each (a skipped
+account prints the `(verified)` line that skipped it).
+
+### 12.3 `status --verify`
+
+Same output as `status`, but each `account:` line's state comes from `claude auth status` run under
+that account dir (`"loggedIn": true` → `logged-in (verified)`, anything else → `not-logged-in
+(verified)`). An account whose dir is missing is `not-logged-in (verified)` without asking the CLI (which
+would create the dir, mode 755, just to say so). When `claude` is not in PATH: heuristic states plus
+`warning: claude not in PATH; login states are the .claude.json heuristic`. Exit 0 always. The script
+itself writes nothing; Claude Code's own `auth status` may leave a first-start `.claude.json` (no
+`oauthAccount`, so the heuristic still reads it as not logged in) in an account dir that was never started.
+
+### 12.4 Interactive offers on the manual path
+
+After the summary of `setup` and `add` — only when input is allowed (no `--no-input`, a tty or
+`/dev/tty` available) and never under `--dry-run` or `--relink`:
+
+1. If the rc line is not found anywhere (§7) and `rc_target` resolves: `Append the source line to
+   <target>? [y/N] ` — `y`/`Y`/`yes` appends exactly as `--rc` would (and remembers it); anything else
+   prints the line as today. When this offer will follow, the summary's `rc file:` line reads `not sourced
+   yet (asked below)` instead of telling the user to add the line by hand.
+2. For each account whose state is `not-logged-in`, in slot order: `Log in to <email> now? [Y/n] ` —
+   empty, `y`, `Y`, `yes` runs the §12.2 login for it; `n`/`N`/`no` skips it; EOF stops asking. A login
+   that does not complete ends nothing: the note `(later: <self> login <slug>)` follows and the next
+   account is offered.
+
+Prompts read from the same source as the email prompt (§4 step 4). **Test hook:** when
+`CLAUDE_MULTI_INPUT=<file>` is set, every interactive prompt (emails, rc, logins) reads its answers
+line by line from that file instead of the tty, and the tty check is considered satisfied. It is
+documented only in the script header as internal.
+
+### 12.5 `update`
+
+Downloads `https://raw.githubusercontent.com/hanslemm/claude-multi/<REF>/skills/claude-multi/scripts/claude-multi-setup.sh`
+(`REF` = `CLAUDE_MULTI_REF` or `main`, validated as in `install.sh`; `CLAUDE_MULTI_UPDATE_URL` overrides
+the whole URL — the test hook) with `curl -fsSL`, else `wget -qO-`, else exit 1 naming both, into the
+0700 temp dir. Refuses the download unless it contains the line `SCRIPT_NAME="claude-multi-setup.sh"`,
+ends with the line `main "$@"` (a download cut at any earlier statement boundary still parses, and would
+install a script that runs nothing) and passes `bash -n` (`error: downloaded file is not
+claude-multi-setup.sh; installed copy untouched`, exit 1). Reads the new `VERSION=` line. If the file is byte-identical to `~/.claude-multi/claude-multi-setup.sh`:
+`already up to date (<version>)`, exit 0. Else: `did "update <install path> <old> → <new>"`, installs
+it (temp file then `mv`, mode 755), then runs `"$INSTALL_PATH" setup --no-input` so `aliases.sh`
+gains any new functions, and — when that setup succeeded — ends with `reload the launchers in this
+terminal: . ~/.claude-multi/aliases.sh  (new terminals pick them up from the rc line)`, since the shell
+that ran `update` still has the old file loaded. `--dry-run` reports what would happen and installs nothing.
+
+### 12.6 Tests added to §10
+
+| # | Case | Asserts |
+|---|---|---|
+| T19 | umbrella + `CLAUDE_MULTI_ACCOUNT` in zsh and bash | `claude-multi who` ≡ `cwho`; `claude-multi use info` exports both variables; `claude-multi use default` unsets both; `claude-multi status` output ≡ script `status`; `claude-multi help` exit 0 with the verb table; `claude-multi relink` reaches `setup --relink` (stub-observable via `No changes`/`Done`) |
+| T20 | `login` with a stub `claude` (records env + args; `auth status` prints `{"loggedIn": true}` once a marker file exists in `CLAUDE_CONFIG_DIR`, else `false`) | `login info` calls `auth login --email info@corp.test` under the info dir with all three credential vars unset; `login 4` and `login hans@proton.test` resolve; `login nonexistent` → 1; `login --no-input` → 2 with the message; `--all` visits only not-logged-in accounts in slot order; a stub that exits 1 → `login did not complete`, exit 1 |
+| T21 | `status --verify` | states `(verified)` from the stub; without `claude` in PATH the heuristic + warning |
+| T22 | interactive offers via `CLAUDE_MULTI_INPUT` | `y` appends the rc line once (and `rc-file` records it); `n` leaves it; login offers run the stub for accepted accounts only; `--no-input` asks nothing; `--dry-run` asks nothing and writes nothing |
+| T23 | `update` with `CLAUDE_MULTI_UPDATE_URL=file://…` served through a stub `curl` in `$HOME/bin` | a newer file installs (`<old> → <new>`, mode 755, then setup runs), a second `update` says `already up to date`, a non-script download is refused and the installed copy is byte-identical afterwards, `--dry-run` installs nothing |
+
+### 12.7 Docs
+
+README: `claude-multi …` verbs replace the long script paths in the Daily-use table; a row in the
+shared/per-account table for the `claude agents` fleet view, background jobs, `/tasks`, `--resume` and
+the daemon (per account, Claude Code's own design); a "Why not `cswap run`?" FAQ written from cswap's
+own README (state what `cswap run` does in its own terms, then the difference: one credential slot
+rotated vs. one config dir + credential per account, all logged in at once, sessions and fleet view
+per account); the prompt / statusLine snippet. SKILL.md: step 6 tells the user to run `claude-multi
+login <slug>` (Claude never runs `login`: it opens a browser), confirms with `status --verify`; step
+8 uses `claude-multi add|remove`; the daily-use table gains `claude-multi …`; the Rules gain "never run
+`login` or `update` yourself" (update replaces the script under the running skill).
+
