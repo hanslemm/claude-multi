@@ -606,6 +606,12 @@ case_T13() { # --rc twice with zsh, then bash, then --rc=FILE
   assert_eq "~/.bashrc still exactly one aliases line" "1" "$(count_matches "$H/.bashrc" 'claude-multi/aliases')"
   run_script -- "--rc=$H/custom.rc"
   assert_rc "--rc=FILE" 0
+  assert_file_has "rc-file remembers the custom rc" "$H/.claude-multi/rc-file" "$H/custom.rc"
+  # ux-4: with the standard rc files gone, status must still find the custom one through rc-file
+  mv "$H/.zshrc" "$H/zshrc.aside"; mv "$H/.bashrc" "$H/bashrc.aside"
+  run_script -- status
+  out_line "status finds the custom rc via rc-file" "rc: sourced from $H/custom.rc"
+  mv "$H/zshrc.aside" "$H/.zshrc"; mv "$H/bashrc.aside" "$H/.bashrc"
   assert_file_line "custom rc has the source line" "$H/custom.rc" "$RC_LINE"
   assert_eq "custom rc has exactly one aliases line" "1" "$(count_matches "$H/custom.rc" 'claude-multi/aliases')"
   run_script -- "--rc=$H/custom.rc"

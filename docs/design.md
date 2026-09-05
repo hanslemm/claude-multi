@@ -44,6 +44,7 @@ Three facts shape everything below (verified against Claude Code 2.1.x):
 | `~/.claude-multi/claude-multi-setup.sh` | the script self-installs | stable path every message refers to |
 | `~/.claude-multi/aliases.sh` | generated every run | launchers, `cuse`, `cwho`; sourced by zsh AND bash |
 | `~/.claude-multi/accounts.tsv` | generated / `add` / `remove` | the account list and slug registry (§4) |
+| `~/.claude-multi/rc-file` | written by `--rc` | the rc file the source line was appended to, so a custom `--rc=FILE` is found again |
 
 Sharing model:
 
@@ -205,7 +206,11 @@ Contents:
 - Line: `[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"`
 - Target: `--rc=FILE`, else by `$SHELL`: `*zsh` → `${ZDOTDIR:-$HOME}/.zshrc`, `*bash` → `$HOME/.bashrc`;
   any other shell → not appended, line printed with a note. Presence check: `grep -F 'claude-multi/aliases'`
-  (matches the v1 `aliases.zsh` line too). Appended once, with a preceding blank line.
+  (matches the v1 `aliases.zsh` line too). Appended once, with a preceding blank line; the target path is
+  then recorded in `~/.claude-multi/rc-file` (one path per line). With `--rc`, the check is the target
+  alone (a user with two shells wants the line in both). Without it, and in `status`, "already sourced"
+  looks, in order, at the remembered files, the `$SHELL` target, `~/.zshrc`, `~/.bashrc`,
+  `~/.bash_profile`, `~/.profile`.
 - Self-install: when the running script is not `~/.claude-multi/claude-multi-setup.sh` and that file
   is missing or differs, copy it there (mode 755). Reported as `install script to …`. A run fed on
   stdin (`curl … | bash`, `bash -c "$(…)"`) has no script file — `$0` resolves to the bash binary — so
@@ -257,7 +262,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 | T10 | 5th account added in cswap (`alice@other.test`) | existing 4 dirs same inodes, new slug `alice-other`, `claude5` alias, registry gains one row |
 | T11 | `--relink` after deleting one link | restored; no other change |
 | T12 | memory: repo-a (files), repo-b (empty), repo-c (no memory); alice has an empty real dir, bob a non-empty one | alice replaced, bob warned + intact, repo-c skipped, new repo picked up by `--relink` |
-| T13 | `--rc` twice with `SHELL=/bin/zsh`, then `SHELL=/bin/bash`, then `--rc=FILE`, then `SHELL=/bin/fish` | exactly one line in each target, second run `No changes`; unknown shell → `not appended (unknown shell …)`, no rc file touched |
+| T13 | `--rc` twice with `SHELL=/bin/zsh`, then `SHELL=/bin/bash`, then `--rc=FILE`, then `SHELL=/bin/fish` | exactly one line in each target, second run `No changes`; `rc-file` holds the custom path and `status` reports `rc: sourced from` it; unknown shell → `not appended (unknown shell …)`, no rc file touched |
 | T14 | source `aliases.sh` in zsh and in bash (`eval` after sourcing for aliases) | `cwho` unpinned/pinned lines, `cuse` by slug and by slot, `cuse nonexistent` → 1, `cuse default`, launcher passes `CLAUDE_CONFIG_DIR`, `KEY=<unset>` with `ANTHROPIC_API_KEY=x` exported (`AUTH_TOKEN`/`OAUTH` `<unset>` too), flag order `--mcp-config … --settings … <args>`, shell env unchanged after, no globals left by `cwho`/`cuse`/`_claude_multi_find` |
 | T15 | `remove b@y.test`; `status` without cswap; then `remove` of an email a cswap stub still lists | row gone, launcher gone, dir still exists, message names the dir; `cswap: not found (manual account list)`; the `cswap still lists …` note |
 | T16 | `status` before and after a fake login (write `{"oauthAccount":{}}` into one `.claude.json`) | line order per §8, `next:` changes |

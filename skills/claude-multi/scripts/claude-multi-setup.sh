@@ -36,6 +36,7 @@ MULTI_DIR="$HOME/.claude-multi"
 ALIASES_FILE="$MULTI_DIR/aliases.sh"
 LEGACY_ALIASES_FILE="$MULTI_DIR/aliases.zsh"
 REGISTRY_FILE="$MULTI_DIR/accounts.tsv"
+RC_MEMO_FILE="$MULTI_DIR/rc-file"   # the rc file --rc appended to, so status finds a custom --rc=FILE later
 INSTALL_PATH="$MULTI_DIR/$SCRIPT_NAME"
 SEED_DIR="$HOME/.claude"
 SEED_JSON="$HOME/.claude.json"
@@ -878,6 +879,22 @@ rc_target() { # → the rc file for --rc (FILE, else by $SHELL); rc 1 for an unk
   esac
 }
 rc_has_line() { [ -f "$1" ] && grep -qF -- "$RC_MARKER" "$1"; }
+rc_remember() { # target → record it in rc-file once (one path per line)
+  [ -f "$RC_MEMO_FILE" ] && grep -qxF -- "$1" "$RC_MEMO_FILE" && return 0
+  printf '%s\n' "$1" >> "$RC_MEMO_FILE"
+}
+rc_found() { # → the first rc file that already carries the line: remembered ones, the $SHELL target, then the usual files
+  local f
+  if [ -s "$RC_MEMO_FILE" ]; then
+    while IFS= read -r f; do
+      [ -n "$f" ] && rc_has_line "$f" && { printf '%s' "$f"; return 0; }
+    done < "$RC_MEMO_FILE"
+  fi
+  for f in "$(rc_target 2>/dev/null)" "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    [ -n "$f" ] && rc_has_line "$f" && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
 
 # macOS terminals open LOGIN shells, which read ~/.bash_profile and never ~/.bashrc unless the profile chains to it.
 rc_login_shell_note() { # target → a note when a bash login shell on macOS would not read it
@@ -892,24 +909,30 @@ rc_login_shell_note() { # target → a note when a bash login shell on macOS wou
 
 RC_STATE=""
 handle_rc() {
-  local target
+  local target found
   if ! target=$(rc_target); then
     RC_STATE="not appended (unknown shell '${SHELL:-}'). Add this line to your shell's rc file, or re-run with --rc=FILE — the claude-<slug> launchers, cuse and cwho exist only in a terminal that has sourced $ALIASES_FILE:
     $RC_LINE"
     return 0
   fi
-  if rc_has_line "$target"; then
-    RC_STATE="sourced from $target$(rc_login_shell_note "$target")"
-    return 0
-  fi
   if [ "$RC_APPEND" = 1 ]; then
+    # --rc means "this target": append here even if another rc file already has the line (a user with both shells wants both)
+    if rc_has_line "$target"; then
+      RC_STATE="sourced from $target$(rc_login_shell_note "$target")"
+      return 0
+    fi
     did "append the source line to $target"
     dry || printf '\n%s\n' "$RC_LINE" >> "$target" || die "cannot append to $target"
+    dry || rc_remember "$target" || die "cannot write $RC_MEMO_FILE"
     RC_STATE="source line appended to $target (open a new terminal, or: . $ALIASES_FILE)$(rc_login_shell_note "$target")"
-  else
-    RC_STATE="NOT touched. Add this line to $target (or re-run with --rc), then open a new terminal or run: . $ALIASES_FILE — the claude-<slug> launchers, cuse and cwho exist only after that:
-    $RC_LINE"
+    return 0
   fi
+  if found=$(rc_found); then
+    RC_STATE="sourced from $found$(rc_login_shell_note "$found")"
+    return 0
+  fi
+  RC_STATE="NOT touched. Add this line to $target (or re-run with --rc), then open a new terminal or run: . $ALIASES_FILE — the claude-<slug> launchers, cuse and cwho exist only after that:
+    $RC_LINE"
 }
 
 # ---------- summary (§8) ----------
@@ -963,11 +986,7 @@ cmd_status() {
   if target=$(command -v cswap 2>/dev/null); then printf 'cswap: found at %s\n' "$target"; else printf 'cswap: not found (manual account list)\n'; fi
   if [ -d "$SHARED_DIR" ]; then printf 'shared: ok %s\n' "$SHARED_DIR"; else printf 'shared: missing\n'; fi
   if [ -f "$ALIASES_FILE" ]; then printf 'aliases: ok %s\n' "$ALIASES_FILE"; else printf 'aliases: missing\n'; fi
-  state=""
-  for target in "$(rc_target 2>/dev/null)" "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc"; do
-    [ -n "$target" ] && rc_has_line "$target" && { state="sourced from $target"; break; }
-  done
-  printf 'rc: %s\n' "${state:-not sourced (run --rc)}"
+  if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
   load_registry
   cur="${CLAUDE_CONFIG_DIR:-}"
