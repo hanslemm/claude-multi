@@ -57,6 +57,7 @@ never copies a login.
 | `claude-multi status [--verify]` | script path, cswap, shared dir, rc line, this terminal, every account, what to do next; `--verify` asks `claude auth status` under each account dir instead of guessing from `.claude.json` (Claude Code may leave its own first-start `.claude.json` in a dir that was never started; harmless) |
 | `claude-multi login <slug\|slot\|email>` | log that account in: `claude auth login --email <email>` under its dir (opens a browser), then confirms with `claude auth status` |
 | `claude-multi login --all` | the same for every account that is not logged in yet, in slot order |
+| `claude-multi sync [--force [slug]] [--merge-local]` | copy the shared `settings.json` into every account's own file (permissions, auto mode, hooks); `--force` overwrites a copy edited through `/config`; `--merge-local` folds `~/.claude/settings.local.json` into the shared file first |
 | `claude-multi update [--dry-run]` | download the latest script from GitHub (`CLAUDE_MULTI_REF` picks a branch or tag), install it and re-run setup so `aliases.sh` gains any new commands |
 | `claude-multi setup [--dry-run] [--rc[=FILE]] [--no-input]` | (re)run setup; `claude-multi help` lists the verbs, `~/.claude-multi/claude-multi-setup.sh --help` the flags |
 | `claude-multi relink` | recreate the shared + memory symlinks inside the existing account dirs (a repo that gained memory later) |
@@ -73,15 +74,34 @@ emails, or takes them from `add <email>` or the `ACCOUNT_ROWS` environment varia
 
 | Item | Where | How |
 |---|---|---|
-| `settings.json` | `~/.claude-shared/settings.json` | passed as `--settings` on every launch |
+| `settings.json` | `~/.claude-shared/settings.json` | passed as `--settings` by the launchers; also copied into each account's own `settings.json` by setup / `claude-multi sync`, so bare `claude` after `cuse` has the same permissions and auto mode |
 | MCP servers (`mcp.json`) | `~/.claude-shared/mcp.json` | passed as `--mcp-config` (merged with the account's own) |
 | `CLAUDE.md`, `commands/`, `agents/`, `skills/`, `output-styles/` | `~/.claude-shared/<name>` | symlinked into every account dir |
 | Per-repo auto-memory | `~/.claude/projects/<p>/memory/` | symlinked into every account (`projects/<p>/memory`) |
 | Login / credentials | `~/.claude-accounts/<slug>/` (+ Keychain on macOS) | per account, never copied |
 | `.claude.json` (sessions, per-project trust, `claude mcp add` servers) | per account dir | per account |
 | `plugins/`, history, sessions | per account dir | per account; plugins install themselves on first start |
+| Trust dialog per repository | each account's `.claude.json` | per account; accept once per repo per account |
 | `claude agents` fleet view, background jobs, `/tasks`, `--resume`, the daemon | per account dir | per account — Claude Code keeps that registry inside the config dir, so a view opened as one account lists only that account's sessions and jobs; `cswap list` still shows every running instance, because it scans processes rather than a registry |
 | `~/.claude`, `~/.claude.json` | the default account | never modified; read once as the seed for `~/.claude-shared` |
+
+## Permissions, auto mode and prompts
+
+Two things decide whether a session prompts you:
+
+- **The launchers** (`claude-<slug>`, `claude1…N`) pass `--settings ~/.claude-shared/settings.json`, so
+  they always run with the shared `permissions` (allow rules, `defaultMode`), the auto-mode policy and
+  the skip-prompt flags — whatever your default account has.
+- **Bare `claude` after `cuse`** reads the account's own `~/.claude-accounts/<slug>/settings.json`.
+  Claude Code writes only `{"theme": …}` there on first start, so setup copies the shared file into it
+  (keeping the account's theme), and `claude-multi sync` does it again whenever you change the shared
+  file. A copy you edited inside that account (`/config`) is never overwritten unless you say
+  `claude-multi sync --force <slug>`; `claude-multi status` counts `settings: <in sync>, <pending>, <modified>`.
+- **`~/.claude/settings.local.json`** (user-level hooks and env) is folded into the shared file at
+  first setup, or later with `claude-multi sync --merge-local`. Files the tool writes here are mode 600.
+- **Trust is per account per repository.** The trust dialog answer lives in each account's
+  `.claude.json`, which the tool never touches, so accept it once per repo in each account; until then
+  that repo's `.claude/settings.json` allow rules are ignored ("this workspace has not been trusted").
 
 ## Prompt and status line
 

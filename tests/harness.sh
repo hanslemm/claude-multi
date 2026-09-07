@@ -35,7 +35,7 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25"
 
 TOTAL_OK=0
 TOTAL_FAIL=0
@@ -877,7 +877,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   assert_rc "status on a fresh HOME" 0
   assert_file_empty "status prints nothing on stderr" "$T/err"
   order_fresh=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases rc terminal next " "$order_fresh"
+  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings rc terminal next " "$order_fresh"
   out_line "cswap found" "cswap: found at $H/bin/cswap"
   out_line "shared missing" "shared: missing"
   out_line "aliases missing" "aliases: missing"
@@ -892,7 +892,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   run_script -- status
   assert_rc "status after setup" 0
   order_setup=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (4 accounts)" "script version cswap shared aliases rc terminal account account account account next " "$order_setup"
+  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings rc terminal account account account account next " "$order_setup"
   assert_true "script: names an existing file" test -f "$(sed -n 's/^script: //p' "$T/out")"
   out_matches "version: has a value" '^version: [^ ]'
   out_line "shared ok" "shared: ok $H/.claude-shared"
@@ -1215,7 +1215,7 @@ case_T21() { # status --verify
   run_script -- status --verify
   assert_rc "status --verify" 0
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status --verify key order" "script version cswap shared aliases rc terminal account account account account next " "$order"
+  assert_eq "status --verify key order" "script version cswap shared aliases settings rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
   out_line "verified: hans-betterdoc not logged in" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
@@ -1441,6 +1441,109 @@ case_T23() { # update through a stub curl serving CLAUDE_MULTI_UPDATE_URL=file:/
   assert_seed_untouched
 }
 
+case_T24() { # settings sync: each account's settings.json mirrors the shared file when that is safe
+  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/hans-betterdoc/settings.json"
+  set_cswap json
+  run_script -- setup
+  assert_rc "setup" 0
+  assert_exists "alice settings.json created" "$a"
+  assert_mode "alice settings.json is mode 600" "$a" "-rw-------"
+  assert_file_has "alice settings carries the shared allow rule" "$a" 'Bash(ls:*)'
+  assert_eq "settings-sync.tsv has 4 rows" "4" "$(grep -c "$(printf '\t')" "$H/.claude-multi/settings-sync.tsv")"
+  run_script -- status
+  out_line "status: all in sync" "settings: 4 in sync, 0 pending, 0 modified"
+  stamp
+  run_script -- setup
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup wrote nothing" "" "$(newer_than "$T/stamp")"
+  # an untouched Claude-created file (theme only) is replaced, theme preserved
+  printf '{\n  "theme": "light"\n}\n' > "$a"
+  run_script -- sync
+  assert_rc "sync (untouched alice)" 0
+  out_has "alice synced" "settings: alice synced"
+  assert_file_has "alice theme preserved" "$a" '"theme": "light"'
+  assert_file_has "alice has the shared allow rule again" "$a" 'Bash(ls:*)'
+  # a change to the shared file propagates to accounts the tool wrote
+  jq '. + {model: "opus"}' "$sh" > "$T/sh.new" && cp "$T/sh.new" "$sh"
+  run_script -- sync
+  assert_rc "sync after a shared edit" 0
+  assert_file_has "alice got the new key" "$a" '"model": "opus"'
+  assert_file_has "hans-betterdoc got the new key" "$b" '"model": "opus"'
+  run_script -- status
+  out_line "status: all in sync after propagation" "settings: 4 in sync, 0 pending, 0 modified"
+  # a copy edited inside the account is kept and reported; --force <slug> overwrites just that one
+  printf '{\n  "permissions": {\n    "allow": ["Bash(x:*)"]\n  }\n}\n' > "$b"
+  run_script -- sync
+  assert_rc "sync with a modified copy" 0
+  out_has "hans-betterdoc kept" "settings: hans-betterdoc modified since the last sync — kept"
+  assert_file_has "kept copy untouched" "$b" 'Bash(x:*)'
+  run_script -- status
+  out_line "status counts the modified copy" "settings: 3 in sync, 0 pending, 1 modified"
+  run_script -- setup
+  err_matches "setup warns about the kept copy" 'settings: hans-betterdoc modified since the last sync'
+  run_script -- sync --force hans-betterdoc
+  assert_rc "sync --force hans-betterdoc" 0
+  out_has "forced overwrite reported" "settings: hans-betterdoc overwritten (--force)"
+  assert_file_has "forced copy has the shared allow rule" "$b" 'Bash(ls:*)'
+  assert_file_lacks "forced copy lost its own rule" "$b" 'Bash(x:*)'
+  # --force with no slug overwrites every modified copy
+  printf '{"permissions": {"allow": ["Bash(y:*)"]}}\n' > "$a"
+  printf '{"permissions": {"allow": ["Bash(y:*)"]}}\n' > "$b"
+  run_script -- sync --force
+  assert_eq "two copies overwritten" "2" "$(grep -c 'overwritten (--force)' "$T/out")"
+  # dry-run writes nothing
+  printf '{\n  "theme": "x"\n}\n' > "$a"
+  stamp
+  run_script -- sync --dry-run
+  assert_rc "sync --dry-run" 0
+  out_has "dry-run would sync alice" "[dry-run] would sync the shared settings into $a"
+  assert_eq "dry-run wrote nothing" "" "$(newer_than "$T/stamp")"
+  run_script -- setup --force
+  assert_rc "--force outside sync is a usage error" 2
+  assert_rc_untouched
+}
+
+case_T25() { # settings.local.json is folded into the shared file
+  local sh="$H/.claude-shared/settings.json"
+  printf '{"permissions": {"allow": ["A"]}, "env": {"X": "1"}}\n' > "$H/.claude/settings.json"
+  printf '{"permissions": {"allow": ["A", "B"]}, "env": {"Y": "2"}, "hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "true"}]}]}}\n' > "$H/.claude/settings.local.json"
+  set_cswap json
+  run_script -- setup
+  assert_rc "setup" 0
+  out_has "seeding mentions the merge" "merged with settings.local.json"
+  assert_file_has "shared has A" "$sh" '"A"'
+  assert_file_has "shared has B" "$sh" '"B"'
+  assert_file_has "shared has env X" "$sh" '"X"'
+  assert_file_has "shared has env Y" "$sh" '"Y"'
+  assert_file_has "shared has the Stop hook" "$sh" '"Stop"'
+  assert_mode "shared settings.json is mode 600" "$sh" "-rw-------"
+  assert_file_has "account copy has the hook too" "$H/.claude-accounts/alice/settings.json" '"Stop"'
+  stamp
+  run_script -- sync --merge-local
+  assert_rc "sync --merge-local (already merged)" 0
+  out_has "already merged" "already merged"
+  out_line "repeated merge says No changes" "No changes — everything was already in place."
+  assert_eq "repeated merge wrote nothing" "" "$(newer_than "$T/stamp")"
+  # a shared file seeded earlier gains new local keys later
+  printf '{"permissions": {"allow": ["A", "C"]}, "env": {"Z": "3"}}\n' > "$H/.claude/settings.local.json"
+  run_script -- sync --merge-local
+  assert_rc "sync --merge-local (new local keys)" 0
+  out_has "merge reported" "merge $H/.claude/settings.local.json into $sh"
+  assert_file_has "shared gained C" "$sh" '"C"'
+  assert_file_has "shared gained Z" "$sh" '"Z"'
+  assert_file_has "shared kept B" "$sh" '"B"'
+  assert_file_has "accounts re-synced with C" "$H/.claude-accounts/alice/settings.json" '"C"'
+  # without jq and python3 the merge is skipped with a warning and the shared file is untouched
+  cp "$sh" "$T/shared.before"
+  printf '{"env": {"W": "4"}}\n' > "$H/.claude/settings.local.json"
+  shadow_tools jq python3
+  run_script -- sync --merge-local
+  assert_rc "sync --merge-local without tools" 0
+  err_matches "warns that no tool can merge" 'neither jq nor python3'
+  assert_same_file "shared unchanged without tools" "$T/shared.before" "$sh"
+  assert_rc_untouched
+}
+
 case_title() {
   case "$1" in
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
@@ -1466,6 +1569,8 @@ case_title() {
     T21) printf 'status --verify' ;;
     T22) printf 'interactive offers via CLAUDE_MULTI_INPUT' ;;
     T23) printf 'update via CLAUDE_MULTI_UPDATE_URL=file:// through a stub curl' ;;
+    T24) printf 'settings sync into each account (untouched, ours, modified, --force, dry-run)' ;;
+    T25) printf 'settings.local.json merged into the shared file (seed, --merge-local, no tools)' ;;
     *) printf '?' ;;
   esac
 }
@@ -1498,7 +1603,7 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-3]) cases="$cases $c" ;;
+      T[0-9] | T1[0-9] | T2[0-5]) cases="$cases $c" ;;
       *) printf 'harness: unknown case %s (T1..T23)\n' "$c" >&2; exit 2 ;;
     esac
   done

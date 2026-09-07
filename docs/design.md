@@ -75,6 +75,7 @@ claude-multi-setup.sh remove <email> [setup flags]
 claude-multi-setup.sh status [--verify]
 claude-multi-setup.sh login <slug|slot|email> | --all        (v1.1, §12)
 claude-multi-setup.sh update [--dry-run]                     (v1.1, §12)
+claude-multi-setup.sh sync [--force [<slug>]] [--merge-local] [--dry-run]   (v1.2, §13)
 claude-multi-setup.sh --help | -h | --version
 ```
 
@@ -230,7 +231,8 @@ Contents:
   `(already logged in)`.
 - `status` lines, each `key: value` on its own line, in this order: `script:`, `version:`, `cswap:`
   (`found at <path>` | `not found (manual account list)`), `shared:` (`ok <dir>` | `missing`),
-  `aliases:` (`ok <file>` | `missing`), `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
+  `aliases:` (`ok <file>` | `missing`), `settings:` (`<n> in sync, <p> pending, <m> modified` — v1.2, §13),
+  `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
   `terminal:` (`default` | `<slug> (<email>)` | `unmanaged <dir>`), then
   `account: <slot> <slug> <email> <logged-in|not-logged-in>` per registered account, then
   `next: <one sentence>` (e.g. `run claude-multi login <slug>` for the first not-logged-in account,
@@ -400,4 +402,69 @@ per account); the prompt / statusLine snippet. SKILL.md: step 6 tells the user t
 login <slug>` (Claude never runs `login`: it opens a browser), confirms with `status --verify`; step
 8 uses `claude-multi add|remove`; the daily-use table gains `claude-multi …`; the Rules gain "never run
 `login` or `update` yourself" (update replaces the script under the running skill).
+
+## 13. v1.2 — the permissions gap on the `cuse` path
+
+Measured 2026-09-07: the launchers pass `--settings ~/.claude-shared/settings.json`, so
+`claude-<slug>` runs with the shared `permissions` (allow rules, `defaultMode`), the auto-mode policy
+and the skip-prompt flags. Bare `claude` after `cuse` does not: it reads `<account>/settings.json`,
+which Claude Code creates on first start as `{"theme": "auto"}`, so a pinned terminal prompts like a
+fresh install (auto-mode config showed 69 shipped rules there vs 73 with the shared file). The fix is
+to keep each account's own `settings.json` equal to the shared file whenever it is safe to do so.
+
+### 13.1 Account settings sync (a setup step, and the `sync` verb)
+
+For each account, the tool writes `~/.claude-shared/settings.json` into `<account>/settings.json` when
+any of these holds:
+
+1. the account file is absent;
+2. the file is **untouched**: never synced by the tool, and every top-level key is `theme` or `$schema`
+   (what Claude Code writes on first start);
+3. the file is **ours**: its `cksum` equals the one recorded at the last sync in
+   `~/.claude-multi/settings-sync.tsv` (`slug<TAB>cksum`, one line per account, rewritten when it changes).
+
+Otherwise the file was edited since the last sync (a `/config` change inside that account, or a hand
+edit) and is **kept**, reported as `  settings: <slug> modified since the last sync — kept (run: … sync
+--force <slug>)`; with `--force` (all accounts) or `--force <slug>` it is overwritten anyway.
+Written content: the shared file, with the account's existing `theme` preserved when jq or python3 is
+available (plain copy otherwise). Files the tool writes here are mode 600 (settings may carry `env`
+secrets). Nothing is written when the account file already equals the content that would be written
+(idempotence, T9). The recorded cksum is that of the written content. The launchers still pass
+`--settings`, so on that path the shared file wins regardless; this step only serves bare `claude`,
+scripts and IDEs under `cuse`.
+
+`sync` runs only this step (no discovery, no links, no aliases) and prints one line per account:
+`  settings: <slug> synced` / `already in sync` / `modified since the last sync — kept …` / `overwritten
+(--force)`; then the same `settings:` summary line `status` prints. In `setup`, a kept file is a warning. Exit 0 unless a write fails.
+
+### 13.2 `settings.local.json`
+
+`~/.claude/settings.local.json` (user-level hooks and env) is folded into the shared file:
+
+- at first seeding of `~/.claude-shared/settings.json`, when `settings.local.json` exists next to the
+  seed: shared = deepmerge(settings.json, settings.local.json);
+- on `sync --merge-local`, for an already-seeded shared file: shared = deepmerge(shared, settings.local.json),
+  written only when the result differs (so re-running is a no-op).
+
+deepmerge: objects merge recursively; arrays become an order-preserving union (left items, then right
+items not already present, compared as whole JSON values); scalars: the right side wins. Implemented
+with jq, else python3; with neither, the merge is skipped with a warning naming both. The shared file is
+chmod 600 afterwards.
+
+### 13.3 Trust is per account per project
+
+`hasTrustDialogAccepted` lives in each account's `.claude.json`. The tool never writes that file, so a
+user accepts the trust dialog once per repo per account; until then that repo's `.claude/settings.json`
+allow rules are ignored (Claude Code prints "this workspace has not been trusted"). README and SKILL.md
+say so; SKILL.md troubleshooting maps "prompts after cuse" to `claude-multi sync` and "allow rules
+ignored" to the trust dialog.
+
+### 13.4 Tests
+
+| # | Case | Asserts |
+|---|---|---|
+| T24 | settings sync | after setup every account has `settings.json` equal to shared (theme preserved when the account file was `{"theme":"dark"}`), mode 600, `settings-sync.tsv` has a row per account; re-run writes nothing (T9-style `find -newer`); editing the shared file then `sync` propagates to untouched/ours accounts; an account file edited by hand (`{"permissions":{"allow":["Bash(x:*)"]}}` with a stale cksum) is kept and reported, `--force <slug>` overwrites only that one, `--force` all; `status` prints `settings: <n> in sync, <p> pending, <m> modified` between `aliases:` and `rc:` (pending = absent, untouched or ours-but-stale); `--dry-run` writes nothing |
+| T25 | settings.local.json merge | seed with `settings.json` `{"permissions":{"allow":["A"]},"env":{"X":"1"}}` and `settings.local.json` `{"permissions":{"allow":["A","B"]},"env":{"Y":"2"},"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"true"}]}]}}` → shared has allow `["A","B"]`, env `{X,Y}`, the hook, mode 600; `sync --merge-local` again → `No changes`; a shared file seeded before local existed gains the local keys on `sync --merge-local`; without jq and python3 → warning, shared unchanged |
+
+Version: 1.2.0 everywhere.
 

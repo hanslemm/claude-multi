@@ -36,7 +36,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -46,6 +46,8 @@ MULTI_DIR="$HOME/.claude-multi"
 ALIASES_FILE="$MULTI_DIR/aliases.sh"
 LEGACY_ALIASES_FILE="$MULTI_DIR/aliases.zsh"
 REGISTRY_FILE="$MULTI_DIR/accounts.tsv"
+SYNC_FILE="$MULTI_DIR/settings-sync.tsv"   # slug<TAB>cksum of the settings.json last written into that account (§13)
+SEED_LOCAL="$HOME/.claude/settings.local.json"
 RC_MEMO_FILE="$MULTI_DIR/rc-file"   # the rc file --rc appended to, so status finds a custom --rc=FILE later
 INSTALL_PATH="$MULTI_DIR/$SCRIPT_NAME"
 SEED_DIR="$HOME/.claude"
@@ -60,7 +62,7 @@ SLOT_RE='^[0-9]+$'
 SLUG_RE='^[a-z0-9][a-z0-9-]*$'   # a slug is a path component AND a shell function name: nothing else gets in
 TAB=$(printf '\t')
 
-CMD=""            # setup | add | remove | status | login | update
+CMD=""            # setup | add | remove | status | login | update | sync
 EMAIL_ARG=""      # add/remove operand
 SLOT_ARG=""       # add --slot N
 LOGIN_ARG=""      # login operand: slug | slot | email
@@ -71,6 +73,9 @@ RELINK=0
 RC_APPEND=0
 RC_FILE_ARG=""
 NO_INPUT=0
+FORCE_SYNC=0      # sync --force [slug]
+FORCE_SLUG=""
+MERGE_LOCAL=0     # sync --merge-local
 UPDATE_REPO="hanslemm/claude-multi"
 UPDATE_PATH="skills/claude-multi/scripts/claude-multi-setup.sh"
 CHANGES=0
@@ -103,6 +108,7 @@ usage:
   $SCRIPT_NAME status [--verify]
   $SCRIPT_NAME login <slug|slot|email> | --all
   $SCRIPT_NAME update [--dry-run]
+  $SCRIPT_NAME sync [--force [<slug>]] [--merge-local] [--dry-run]
   $SCRIPT_NAME --help | -h | --version
 
 commands:
@@ -117,6 +123,9 @@ commands:
                  terminal); --all does it for every account that is not logged in, in slot order
   update         download the latest script from GitHub into ~/.claude-multi (CLAUDE_MULTI_REF picks a branch
                  or tag), then run setup --no-input so aliases.sh gains any new functions
+  sync           copy the shared settings.json into each account's own settings.json (so bare `claude` after `cuse`
+                 gets the same permissions and auto mode); --force [slug] overwrites copies edited via /config;
+                 --merge-local folds ~/.claude/settings.local.json into the shared file first
 
 flags:
   --dry-run      print every change as '[dry-run] would …'; create nothing
@@ -302,8 +311,20 @@ seed_shared() {
 
   if [ ! -e "$SHARED_DIR/settings.json" ]; then
     if [ -f "$SEED_DIR/settings.json" ]; then
-      did "seed $SHARED_DIR/settings.json (copy of $SEED_DIR/settings.json)"
-      dry || cp -- "$SEED_DIR/settings.json" "$SHARED_DIR/settings.json" || die "cannot copy settings.json"
+      if [ -f "$SEED_LOCAL" ]; then
+        mk_tmp
+        if json_deepmerge "$SEED_DIR/settings.json" "$SEED_LOCAL" > "$TMP_DIR/seed-merged.json" 2>/dev/null; then
+          did "seed $SHARED_DIR/settings.json (copy of $SEED_DIR/settings.json merged with settings.local.json)"
+          dry || { cp -- "$TMP_DIR/seed-merged.json" "$SHARED_DIR/settings.json" && chmod 600 "$SHARED_DIR/settings.json"; } || die "cannot write settings.json"
+        else
+          warn "neither jq nor python3 available: $SEED_LOCAL was not merged into the shared settings (run: sync --merge-local once one is installed)"
+          did "seed $SHARED_DIR/settings.json (copy of $SEED_DIR/settings.json)"
+          dry || { cp -- "$SEED_DIR/settings.json" "$SHARED_DIR/settings.json" && chmod 600 "$SHARED_DIR/settings.json"; } || die "cannot copy settings.json"
+        fi
+      else
+        did "seed $SHARED_DIR/settings.json (copy of $SEED_DIR/settings.json)"
+        dry || { cp -- "$SEED_DIR/settings.json" "$SHARED_DIR/settings.json" && chmod 600 "$SHARED_DIR/settings.json"; } || die "cannot copy settings.json"
+      fi
     else
       did "seed empty $SHARED_DIR/settings.json (no $SEED_DIR/settings.json to copy)"
       dry || printf '{}\n' > "$SHARED_DIR/settings.json" || die "cannot write settings.json"
@@ -950,6 +971,7 @@ claude-multi() { # <verb> [args…] — a function, so `use` can change THIS she
         '  setup [--dry-run] [--rc[=FILE]] [--no-input]   re-run the setup (discover, seed, link, aliases)' \
         '  relink                only (re)create the shared + memory symlinks (= setup --relink)' \
         '  update [--dry-run]    fetch the latest claude-multi-setup.sh from GitHub and re-run setup' \
+        '  sync [--force [slug]] copy the shared settings.json into every account, so bare claude after cuse gets the same permissions' \
         '  help                  this table' \
         '' \
         "  launchers: claude-<slug> [args…] (or claude<slot>) run Claude Code as that account for one command." \
@@ -1084,6 +1106,190 @@ handle_rc() {
     $RC_LINE"
 }
 
+# ---------- settings sync (§13): each account's own settings.json mirrors the shared file when that is safe ----------
+file_cksum() { cksum < "$1" | awk '{print $1 "-" $2}'; }
+
+json_deepmerge() { # left-file right-file → stdout. Objects merge recursively, arrays become an order-preserving union, scalars: right wins. rc 1 without jq/python3.
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --slurpfile a "$1" --slurpfile b "$2" '
+      def dm(x; y):
+        if (x|type)=="object" and (y|type)=="object" then
+          reduce (reduce ((x|keys_unsorted) + (y|keys_unsorted))[] as $k ([]; if index([$k]) then . else . + [$k] end))[] as $k ({};
+            .[$k] = (if (x|has($k)) and (y|has($k)) then dm(x[$k]; y[$k]) elif (y|has($k)) then y[$k] else x[$k] end))
+        elif (x|type)=="array" and (y|type)=="array" then
+          reduce (x + y)[] as $e ([]; if index([$e]) then . else . + [$e] end)
+        else y end;
+      dm($a[0]; $b[0])'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+def dm(x, y):
+    if isinstance(x, dict) and isinstance(y, dict):
+        out = {}
+        for k in list(x) + [k for k in y if k not in x]:
+            out[k] = dm(x[k], y[k]) if (k in x and k in y) else (y[k] if k in y else x[k])
+        return out
+    if isinstance(x, list) and isinstance(y, list):
+        out = []
+        for e in x + y:
+            if e not in out:
+                out.append(e)
+        return out
+    return y
+print(json.dumps(dm(json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))), indent=2))
+PY
+  else
+    return 1
+  fi
+}
+
+settings_untouched() { # file → true when every top-level key is theme or $schema (what Claude Code writes on first start)
+  local keys
+  if command -v jq >/dev/null 2>&1; then
+    keys=$(jq -r 'if type=="object" then keys[] else "!" end' "$1" 2>/dev/null) || return 1
+  elif command -v python3 >/dev/null 2>&1; then
+    keys=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join(d.keys()) if isinstance(d,dict) else "!")' "$1" 2>/dev/null) || return 1
+  else
+    tr -d ' \n\t\r' < "$1" | grep -qE '^\{("(theme|\$schema)":"[^"]*",?)*\}$'; return $?
+  fi
+  [ -z "$(printf '%s\n' "$keys" | grep -vE '^(theme|\$schema)$')" ]
+}
+
+settings_render() { # account-settings-file out-file → the shared file, serialised by jq/python3 when available (so the result is the same whether or not the account file exists yet), with the account's own theme preserved
+  local acct="$1" out="$2"
+  if command -v jq >/dev/null 2>&1; then
+    if [ -f "$acct" ]; then
+      jq -n --slurpfile s "$SHARED_DIR/settings.json" --slurpfile a "$acct" \
+        '$s[0] + (if ($a[0]|type)=="object" and ($a[0]|has("theme")) then {theme: $a[0].theme} else {} end)' > "$out" 2>/dev/null && return 0
+    fi
+    jq '.' "$SHARED_DIR/settings.json" > "$out" 2>/dev/null && return 0
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$SHARED_DIR/settings.json" "$acct" > "$out" 2>/dev/null <<'PY' && return 0
+import json, os, sys
+s = json.load(open(sys.argv[1]))
+if os.path.isfile(sys.argv[2]):
+    try:
+        a = json.load(open(sys.argv[2]))
+        if isinstance(s, dict) and isinstance(a, dict) and "theme" in a:
+            s["theme"] = a["theme"]
+    except Exception:
+        pass
+print(json.dumps(s, indent=2))
+PY
+  fi
+  cp -- "$SHARED_DIR/settings.json" "$out"
+}
+
+SYNC_SLUGS=()
+SYNC_SUMS=()
+sync_load() {
+  local s c
+  SYNC_SLUGS=(); SYNC_SUMS=()
+  [ -f "$SYNC_FILE" ] || return 0
+  while IFS="$TAB" read -r s c; do
+    case "$s" in '' | '#'*) continue ;; esac
+    [ -n "$c" ] || continue
+    SYNC_SLUGS[${#SYNC_SLUGS[@]}]=$s; SYNC_SUMS[${#SYNC_SUMS[@]}]=$c
+  done < "$SYNC_FILE"
+}
+sync_lookup() { local i=0; while [ $i -lt ${#SYNC_SLUGS[@]} ]; do [ "${SYNC_SLUGS[$i]}" = "$1" ] && { printf '%s' "${SYNC_SUMS[$i]}"; return 0; }; i=$((i + 1)); done; return 1; }
+sync_set() { local i=0; while [ $i -lt ${#SYNC_SLUGS[@]} ]; do [ "${SYNC_SLUGS[$i]}" = "$1" ] && { SYNC_SUMS[$i]=$2; return 0; }; i=$((i + 1)); done; SYNC_SLUGS[${#SYNC_SLUGS[@]}]=$1; SYNC_SUMS[${#SYNC_SUMS[@]}]=$2; }
+sync_save() { # rewrite the state file only when its content changes
+  local i=0 content
+  content="# claude-multi: slug<TAB>cksum of the settings.json last written into that account. Edit nothing here.
+"
+  while [ $i -lt ${#SYNC_SLUGS[@]} ]; do content="$content${SYNC_SLUGS[$i]}$TAB${SYNC_SUMS[$i]}
+"; i=$((i + 1)); done
+  if [ -f "$SYNC_FILE" ] && [ "$(cat "$SYNC_FILE")" = "$(printf '%s' "$content")" ]; then return 0; fi
+  dry && return 0
+  printf '%s' "$content" > "$SYNC_FILE" || die "cannot write $SYNC_FILE"
+}
+
+sync_account() { # slug mode(setup|sync)
+  local slug=$1 mode=$2 dir acct tmp cur rec reason=""
+  dir="$ACCOUNTS_ROOT/$slug"; acct="$dir/settings.json"
+  if [ ! -d "$dir" ]; then [ "$mode" = sync ] && note "settings: $slug has no account dir yet (run: $(self_cmd) setup)"; return 0; fi
+  mk_tmp; tmp="$TMP_DIR/settings.$slug.json"
+  settings_render "$acct" "$tmp" || die "cannot render settings for $slug"
+  if [ -f "$acct" ]; then
+    cur=$(file_cksum "$acct")
+    if cmp -s -- "$acct" "$tmp"; then
+      if [ "$(sync_lookup "$slug" || true)" != "$cur" ]; then did "record the settings sync state for $slug"; fi
+      sync_set "$slug" "$cur"
+      [ "$mode" = sync ] && note "settings: $slug already in sync"
+      return 0
+    fi
+    rec=$(sync_lookup "$slug" || true)
+    if [ -n "$rec" ] && [ "$rec" = "$cur" ]; then reason=ours
+    elif settings_untouched "$acct"; then reason=untouched
+    elif [ "$FORCE_SYNC" = 1 ] && { [ -z "$FORCE_SLUG" ] || [ "$FORCE_SLUG" = "$slug" ]; }; then reason=forced
+    else
+      if [ "$mode" = sync ]; then note "settings: $slug modified since the last sync — kept (run: $(self_cmd) sync --force $slug)"
+      else warn "settings: $slug modified since the last sync — kept, so bare 'claude' under 'cuse $slug' keeps that account's own permissions (run: $(self_cmd) sync --force $slug to overwrite)"; fi
+      return 0
+    fi
+  else
+    reason=absent
+  fi
+  if [ "$reason" = forced ]; then did "overwrite $acct with the shared settings (--force)"; else did "sync the shared settings into $acct"; fi
+  [ "$mode" = sync ] && { if [ "$reason" = forced ]; then note "settings: $slug overwritten (--force)"; else note "settings: $slug synced"; fi; }
+  dry && return 0
+  cp -- "$tmp" "$acct.tmp" && chmod 600 "$acct.tmp" && mv -- "$acct.tmp" "$acct" || die "cannot write $acct"
+  sync_set "$slug" "$(file_cksum "$acct")"
+}
+
+sync_all_settings() { # mode(setup|sync): setup walks SLUGS (the accounts just set up), sync walks the registry
+  local i=0
+  [ -f "$SHARED_DIR/settings.json" ] || return 0
+  sync_load
+  if [ "$1" = setup ]; then
+    while [ $i -lt ${#SLUGS[@]} ]; do sync_account "${SLUGS[$i]}" setup; i=$((i + 1)); done
+  else
+    while [ $i -lt ${#REG_SLUGS[@]} ]; do [ -n "${REG_SLUGS[$i]}" ] && sync_account "${REG_SLUGS[$i]}" sync; i=$((i + 1)); done
+  fi
+  sync_save
+}
+
+settings_status_line() { # after load_registry: settings: <n> in sync, <p> pending, <m> modified
+  local i=0 n=0 p=0 m=0 slug dir acct tmp cur rec
+  if [ ! -f "$SHARED_DIR/settings.json" ]; then printf 'settings: shared file missing (run setup)\n'; return 0; fi
+  sync_load; mk_tmp; tmp="$TMP_DIR/settings.status.json"
+  while [ $i -lt ${#REG_SLUGS[@]} ]; do
+    slug=${REG_SLUGS[$i]}; i=$((i + 1)); dir="$ACCOUNTS_ROOT/$slug"; acct="$dir/settings.json"
+    [ -n "$slug" ] && [ -d "$dir" ] || continue
+    if [ ! -f "$acct" ]; then p=$((p + 1)); continue; fi
+    settings_render "$acct" "$tmp" 2>/dev/null || { p=$((p + 1)); continue; }
+    if cmp -s -- "$acct" "$tmp"; then n=$((n + 1)); continue; fi
+    cur=$(file_cksum "$acct"); rec=$(sync_lookup "$slug" || true)
+    if { [ -n "$rec" ] && [ "$rec" = "$cur" ]; } || settings_untouched "$acct"; then p=$((p + 1)); else m=$((m + 1)); fi
+  done
+  printf 'settings: %s in sync, %s pending, %s modified\n' "$n" "$p" "$m"
+}
+
+merge_local_into_shared() { # settings.local.json → shared, deepmerge; rc 1 when no tool can merge
+  local out
+  [ -f "$SEED_LOCAL" ] || { note "no $SEED_LOCAL to merge"; return 0; }
+  mk_tmp; out="$TMP_DIR/shared-merged.json"
+  if ! json_deepmerge "$SHARED_DIR/settings.json" "$SEED_LOCAL" > "$out" 2>/dev/null; then
+    warn "neither jq nor python3 available: cannot merge $SEED_LOCAL into $SHARED_DIR/settings.json"; return 1
+  fi
+  if cmp -s -- "$out" "$SHARED_DIR/settings.json"; then note "settings.local.json is already merged into $SHARED_DIR/settings.json"; return 0; fi
+  did "merge $SEED_LOCAL into $SHARED_DIR/settings.json"
+  dry && return 0
+  cp -- "$out" "$SHARED_DIR/settings.json.tmp" && chmod 600 "$SHARED_DIR/settings.json.tmp" && mv -- "$SHARED_DIR/settings.json.tmp" "$SHARED_DIR/settings.json" || die "cannot write $SHARED_DIR/settings.json"
+}
+
+cmd_sync() {
+  [ -f "$SHARED_DIR/settings.json" ] || die "$SHARED_DIR/settings.json does not exist yet — run: $(self_cmd) setup"
+  load_registry
+  [ "$MERGE_LOCAL" = 0 ] || merge_local_into_shared || true
+  sync_all_settings sync
+  say ""
+  if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
+  settings_status_line
+  [ "$WARNINGS" = 0 ] || say "$WARNINGS warning(s) above."
+}
+
 # ---------- summary (§8) ----------
 summary() {
   local i slugw=6 emailw=8 v
@@ -1135,9 +1341,10 @@ cmd_status() {
   if target=$(command -v cswap 2>/dev/null); then printf 'cswap: found at %s\n' "$target"; else printf 'cswap: not found (manual account list)\n'; fi
   if [ -d "$SHARED_DIR" ]; then printf 'shared: ok %s\n' "$SHARED_DIR"; else printf 'shared: missing\n'; fi
   if [ -f "$ALIASES_FILE" ]; then printf 'aliases: ok %s\n' "$ALIASES_FILE"; else printf 'aliases: missing\n'; fi
+  load_registry
+  settings_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
-  load_registry
   cur="${CLAUDE_CONFIG_DIR:-}"
   state="unmanaged $cur"
   if [ -z "$cur" ]; then
@@ -1387,12 +1594,14 @@ parse_args() {
       --no-input) NO_INPUT=1 ;;
       --all) LOGIN_ALL=1 ;;
       --verify) VERIFY=1 ;;
+      --force) FORCE_SYNC=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then shift; FORCE_SLUG=$1; fi ;;
+      --merge-local) MERGE_LOCAL=1 ;;
       --slot) shift; [ $# -gt 0 ] || usage_err "--slot needs a number"; SLOT_ARG=$1 ;;
       --slot=*) SLOT_ARG=${1#--slot=} ;;
       -h | --help) usage; exit 0 ;;
       --version) printf '%s\n' "$VERSION"; exit 0 ;;
       -*) usage_err "unknown option: $1" ;;
-      setup | add | remove | status | login | update)
+      setup | add | remove | status | login | update | sync)
         [ -z "$CMD" ] || usage_err "unexpected argument: $1"
         CMD=$1 ;;
       *)
@@ -1421,9 +1630,13 @@ parse_args() {
       [ "$RELINK" = 0 ] || usage_err "--relink cannot be combined with login" ;;
     update)
       [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "update only takes --dry-run" ;;
+    sync)
+      [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "sync only takes --force [slug], --merge-local and --dry-run" ;;
   esac
   [ "$LOGIN_ALL" = 0 ] || [ "$CMD" = login ] || usage_err "--all only applies to login"
   [ "$VERIFY" = 0 ] || [ "$CMD" = status ] || usage_err "--verify only applies to status"
+  [ "$FORCE_SYNC" = 0 ] || [ "$CMD" = sync ] || usage_err "--force only applies to sync"
+  [ "$MERGE_LOCAL" = 0 ] || [ "$CMD" = sync ] || usage_err "--merge-local only applies to sync"
   if [ -n "$SLOT_ARG" ]; then
     [ "$CMD" = add ] || usage_err "--slot only applies to add"
     [[ "$SLOT_ARG" =~ $SLOT_RE ]] && [ "$SLOT_ARG" -ge 1 ] || usage_err "--slot needs a number ≥ 1, got '$SLOT_ARG'"
@@ -1490,6 +1703,7 @@ cmd_setup() { # also the second half of add / remove
     link_memory_into "$ACCOUNTS_ROOT/${SLUGS[$i]}"
     i=$((i + 1))
   done
+  sync_all_settings setup
   write_registry
   write_aliases
   write_legacy_shim
@@ -1508,6 +1722,7 @@ main() {
   if dry; then say "claude-multi $CMD (dry-run — nothing will be changed)"; else say "claude-multi $CMD"; fi
   case "$CMD" in
     update) cmd_update; return $? ;;
+    sync) cmd_sync; return $? ;;
   esac
   if [ "$RELINK" = 1 ]; then cmd_relink; return 0; fi
   cmd_setup

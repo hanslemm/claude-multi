@@ -106,6 +106,7 @@ Explain, briefly:
 | `claude-multi login <slug\|slot\|email>` / `login --all` | log an account in (browser); `--all` = every account not logged in yet |
 | `claude-multi add <email>` / `remove <email>` | register / drop an account (step 8) |
 | `claude-multi update [--dry-run]` | fetch the latest script from GitHub, install it, re-run setup |
+| `claude-multi sync [--force [slug]] [--merge-local]` | copy the shared `settings.json` into every account's own file, so bare `claude` after `cuse` has the same permissions and auto mode; `--force` overwrites a copy edited via `/config`; `--merge-local` folds `~/.claude/settings.local.json` into the shared file |
 | `claude-multi relink` | recreate the shared + memory symlinks (a repo that gained memory later) |
 | `claude-multi help` | the verb table |
 
@@ -115,7 +116,7 @@ Shared across accounts: `~/.claude-shared/settings.json` and `mcp.json` (passed 
 
 Per account, never shared: the login, `.claude.json` (sessions, per-project trust, MCP servers added with `claude mcp add`), history, `plugins/`, and — Claude Code's own design, the registry lives inside the config dir — the `claude agents` fleet view, background jobs, `/tasks`, `--resume` and the daemon: a view opened as one account lists only that account's sessions. Plugins install themselves per account on the first start of that account; the first launch may take a moment.
 
-Settings changes go in `~/.claude-shared/settings.json`; a change made through `/config` inside one account lands in that account's own file and is not shared.
+Settings changes go in `~/.claude-shared/settings.json`, then `claude-multi sync` (or `$SETUP sync --no-input`) copies them into every account's own file; the launchers pass the shared file as `--settings` regardless. A change made through `/config` inside one account lands in that account's own file, is not shared, and stops that account being synced until `sync --force <slug>`. Trust is per account per repository: the user accepts the trust dialog once per repo in each account, and until then that repo's `.claude/settings.json` allow rules are ignored.
 
 ### 8. Later: add or remove an account
 
@@ -133,7 +134,7 @@ When you do it for them, the same verbs on the script: `$SETUP add <email> --no-
 
 - Never migrate, copy or read tokens or credentials; never touch `~/.claude`, `~/.claude.json`, the Keychain, or a `.credentials.json`.
 - Never run `login` (`$SETUP login …`, `claude-multi login …`, `claude auth login`) yourself: it opens a browser and needs the user's terminal. Tell the user the command and confirm afterwards with `$SETUP status --verify`.
-- Never run `update` (`$SETUP update`, `claude-multi update`) yourself: it replaces the script under the running skill. Tell the user the command; they run it in their terminal.
+- Never run `update` (`$SETUP update`, `claude-multi update`) yourself: it replaces the script under the running skill. Tell the user the command; they run it in their terminal. `sync` is safe to run with `--no-input`; never pass `--force` without the user's explicit yes, since it overwrites settings they edited.
 - Never edit an rc file yourself and never pass `--rc` without the user's explicit yes in this conversation.
 - Never set or export `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` for these accounts: they outrank the subscription login (the API key bills the API). The launchers and `login` unset all three in their subshell on purpose.
 - Never run `cswap switch` (or any rotator) as a substitute: that changes every terminal, which is the problem this tool removes.
@@ -151,7 +152,9 @@ When you do it for them, the same verbs on the script: `$SETUP add <email> --no-
 | Usage is billed to the API, not the subscription | `ANTHROPIC_API_KEY` is set in the shell (unset it in the rc file; the launchers strip it, but `cuse` + plain `claude` does not), or `~/.claude-shared/settings.json` carries an `env.ANTHROPIC_API_KEY` / `apiKeyHelper` — the script warns about the file; remove the key from it. |
 | Plugins missing in one account | Plugins are per account; the first start of that account installs them. Start it once and wait. |
 | `cwho` shows `not managed by claude-multi` | Something else sets `CLAUDE_CONFIG_DIR` (rc file, direnv, an IDE). Remove that export or run `cuse <slug>` to override it for this terminal. |
-| A settings change is not shared | It was made with `/config`, which writes the account's own file. Edit `~/.claude-shared/settings.json` instead. |
+| A settings change is not shared | It was made with `/config`, which writes the account's own file. Edit `~/.claude-shared/settings.json` instead, then run `$SETUP sync --no-input` (`--force <slug>` if that account's copy was edited). |
+| Plain `claude` prompts for everything after `cuse`, but `claude-<slug>` does not | The account's own `settings.json` is out of sync with the shared file. Run `$SETUP sync --no-input`; `$SETUP status` shows `settings: … modified` when a copy was edited and needs `--force <slug>`. |
+| "this workspace has not been trusted" / repo allow rules ignored | Trust is per account per repository. The user opens that repo once with that account and accepts the trust dialog. |
 | `claude-<slug>: command not found` / `claude-multi: command not found` | `aliases.sh` is not sourced in this terminal. Open a new terminal, or `source ~/.claude-multi/aliases.sh`. The long form `~/.claude-multi/claude-multi-setup.sh <verb>` works without it (except `use` / `who`). |
 | `claude-multi update` says `downloaded file is not claude-multi-setup.sh` | The download was refused and the installed copy is untouched. Check `CLAUDE_MULTI_REF` (a branch or tag that exists) and the network, then retry. |
 | `error: could not find any Claude account.` | No cswap, no registry. Ask for the emails and use `add <email>` (step 2). |
