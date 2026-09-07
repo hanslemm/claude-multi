@@ -468,3 +468,13 @@ ignored" to the trust dialog.
 
 Version: 1.2.0 everywhere.
 
+### 13.5 The read-block trap (v1.2.2)
+
+Answering **Block** to Claude Code's "read outside the working directory?" prompt persists
+`permissions.blockReadsOutsideWorkingDirectories: true` in the account's own `settings.json`. Under it,
+every Bash command the shell parser cannot analyse (`node -e …`, sed with braces) prompts, in every
+permission mode, workflow subagents included, and a running session keeps the flag until it restarts.
+`setup`, `sync` and `status` warn whenever an account file or the shared file carries the key
+(`warning: account <slug> sets permissions.blockReadsOutsideWorkingDirectories: true …`, naming the
+file and the two-step fix). T24 asserts the warning on all three paths and for the shared file.
+

@@ -99,6 +99,10 @@ Two things decide whether a session prompts you:
   `claude-multi sync --force <slug>`; `claude-multi status` counts `settings: <in sync>, <pending>, <modified>`.
 - **`~/.claude/settings.local.json`** (user-level hooks and env) is folded into the shared file at
   first setup, or later with `claude-multi sync --merge-local`. Files the tool writes here are mode 600.
+- **Never answer "Block" to the outside-read prompt.** It writes `permissions.blockReadsOutsideWorkingDirectories: true`
+  into that account's own `settings.json`, after which every Bash command the shell parser cannot
+  analyse (`node -e`, sed with braces) prompts, in every permission mode, workflow subagents included,
+  until the key is removed and the session restarted. `setup`, `sync` and `status` warn when they see it.
 - **Trust is per account per repository.** The trust dialog answer lives in each account's
   `.claude.json`, which the tool never touches, so accept it once per repo in each account; until then
   that repo's `.claude/settings.json` allow rules are ignored ("this workspace has not been trusted").

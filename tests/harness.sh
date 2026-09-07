@@ -1505,6 +1505,20 @@ case_T24() { # settings sync: each account's settings.json mirrors the shared fi
   assert_eq "dry-run wrote nothing" "" "$(newer_than "$T/stamp")"
   run_script -- setup --force
   assert_rc "--force outside sync is a usage error" 2
+  # the read-block trap: a "Block" answer persists blockReadsOutsideWorkingDirectories: true in the account file; every pass names it
+  printf '{\n  "theme": "auto",\n  "permissions": {\n    "blockReadsOutsideWorkingDirectories": true\n  }\n}\n' > "$a"
+  run_script -- sync
+  assert_rc "sync with the read-block key" 0
+  err_has "sync warns about the read block on alice" "account alice sets permissions.blockReadsOutsideWorkingDirectories: true"
+  err_has "the warning names the fix" "Remove that key from $a and restart"
+  run_script -- status
+  assert_rc "status with the read-block key" 0
+  err_has "status warns about the read block on alice" "account alice sets permissions.blockReadsOutsideWorkingDirectories: true"
+  run_script -- setup
+  err_has "setup warns about the read block on alice" "account alice sets permissions.blockReadsOutsideWorkingDirectories: true"
+  jq '. + {permissions: {blockReadsOutsideWorkingDirectories: true}}' "$sh" > "$T/sh.rb" && cp "$T/sh.rb" "$sh"
+  run_script -- status
+  err_has "status warns when the SHARED file carries the key" "the shared settings file sets permissions.blockReadsOutsideWorkingDirectories: true"
   assert_rc_untouched
 }
 

@@ -36,7 +36,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.2.1"
+VERSION="1.2.2"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -299,6 +299,11 @@ write_mcp_json() { # dest ← {"mcpServers": <from SEED_JSON>}
 
 # A settings file passed via --settings re-injects env.ANTHROPIC_API_KEY / apiKeyHelper on EVERY launch, above the
 # launcher's unset — so it would silently bill the API. Names the file only; never prints a value.
+settings_readblock_warning() { # file label → warn when the file pins permissions.blockReadsOutsideWorkingDirectories to true
+  [ -f "$1" ] || return 0
+  grep -qE '"blockReadsOutsideWorkingDirectories"[[:space:]]*:[[:space:]]*true' "$1" || return 0
+  warn "$2 sets permissions.blockReadsOutsideWorkingDirectories: true (what a \"Block\" answer to an outside-read prompt writes). Under it every Bash command the shell parser cannot analyse (node -e, sed with braces) prompts, in every permission mode, workflow subagents included. Remove that key from $1 and restart the sessions that loaded it."
+}
 settings_credential_warning() { # file
   [ -f "$1" ] || return 0
   grep -qE '"(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|apiKeyHelper)"' -- "$1" 2>/dev/null || return 0
@@ -1209,6 +1214,7 @@ sync_account() { # slug mode(setup|sync)
   local slug=$1 mode=$2 dir acct tmp cur rec reason=""
   dir="$ACCOUNTS_ROOT/$slug"; acct="$dir/settings.json"
   if [ ! -d "$dir" ]; then [ "$mode" = sync ] && note "settings: $slug has no account dir yet (run: $(self_cmd) setup)"; return 0; fi
+  settings_readblock_warning "$acct" "account $slug"
   mk_tmp; tmp="$TMP_DIR/settings.$slug.json"
   settings_render "$acct" "$tmp" || die "cannot render settings for $slug"
   if [ -f "$acct" ]; then
@@ -1241,6 +1247,7 @@ sync_account() { # slug mode(setup|sync)
 sync_all_settings() { # mode(setup|sync): setup walks SLUGS (the accounts just set up), sync walks the registry
   local i=0
   [ -f "$SHARED_DIR/settings.json" ] || return 0
+  settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
   sync_load
   if [ "$1" = setup ]; then
     while [ $i -lt ${#SLUGS[@]} ]; do sync_account "${SLUGS[$i]}" setup; i=$((i + 1)); done
@@ -1345,6 +1352,12 @@ cmd_status() {
   settings_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
+  settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
+  i=0
+  while [ $i -lt ${#REG_SLUGS[@]} ]; do
+    [ -n "${REG_SLUGS[$i]}" ] && settings_readblock_warning "$ACCOUNTS_ROOT/${REG_SLUGS[$i]}/settings.json" "account ${REG_SLUGS[$i]}"
+    i=$((i + 1))
+  done
   cur="${CLAUDE_CONFIG_DIR:-}"
   state="unmanaged $cur"
   if [ -z "$cur" ]; then
