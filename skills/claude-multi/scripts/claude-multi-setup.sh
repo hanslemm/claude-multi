@@ -36,7 +36,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -1439,7 +1439,8 @@ login_index_for() { # slug|slot|email → index, rc 1 if unknown
   done
   return 1
 }
-login_needs_terminal() { # exit 2 unless a login can be run interactively (§12.2)
+login_needs_terminal() { # exit 2 unless a login can be run interactively (§12.2); a dry-run only prints the plan and needs no terminal
+  dry && return 0
   prompt_allowed && return 0
   printf 'error: login opens a browser and needs a terminal; run: claude-multi login <slug>\n' >&2
   exit 2

@@ -1149,6 +1149,11 @@ case_T20() { # `login` against the stub claude
   err_has "login --no-input: the message" "login opens a browser and needs a terminal"
   err_has "login --no-input: names claude-multi login" "claude-multi login"
   assert_eq "login --no-input: no auth login call" "3" "$(login_lines)"
+  # a dry-run prints the plan without a terminal (no hook, stdin not a tty) and runs nothing
+  run_script -- login --all --dry-run
+  assert_rc "login --all --dry-run without a terminal" 0
+  out_has "dry-run lists the pending login" "[dry-run] would run claude auth login --email"
+  assert_eq "dry-run: no auth login call" "3" "$(login_lines)"
   # claude not in PATH
   hide_claude
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login info

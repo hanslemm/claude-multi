@@ -316,7 +316,7 @@ basename of `CLAUDE_CONFIG_DIR`.
 
 ### 12.2 `login <slug|slot|email>` and `login --all`
 
-Resolves the account from `accounts.tsv` (unknown → `error: no account '<x>'` + the list, exit 1).
+Resolves the account from `accounts.tsv` (unknown → `error: no account '<x>'` + the list, exit 1). `--dry-run` prints the plan (`[dry-run] would run claude auth login --email …`) and needs no terminal.
 Needs `claude` in PATH (else exit 1 naming it) and a terminal: with `--no-input`, or when neither stdin
 is a tty nor `/dev/tty` opens, it exits 2 with `error: login opens a browser and needs a terminal; run:
 claude-multi login <slug>`. Otherwise it runs, in a subshell with `ANTHROPIC_API_KEY`,
