@@ -18,7 +18,7 @@ Account switchers work around that by rotating which account occupies the slot. 
 Everything else in claude-multi is bookkeeping around that fact.
 
 ```
-~/.claude-accounts/<slug>/   one CLAUDE_CONFIG_DIR per account: its login, sessions, plugins
+~/.claude-accounts/<slug>/   one CLAUDE_CONFIG_DIR per account: its login, sessions, history
 ~/.claude-shared/            settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/, output-styles/
 ~/.claude-multi/             the script, the generated aliases.sh, the account list
 ~/.claude                    untouched: the default account, read once as the seed
@@ -38,14 +38,17 @@ Two details of that line are load-bearing. Both are root options, so they must c
 
 Per-repo auto-memory is shared too: for every `~/.claude/projects/<repo>/memory/` that exists, each account gets a symlink to it. The canonical folder stays in `~/.claude`; nothing is moved.
 
-Per account, on purpose: the credential, `.claude.json` (sessions, per-project trust, servers added with `claude mcp add`), `plugins/`, history, and the `claude agents` fleet view with its background jobs. Claude Code keeps that registry inside the config directory, so a fleet view opened as one account lists that account's sessions only.
+Plugins take the same route: each account's `plugins/` is a symlink to `~/.claude/plugins`, so a plugin installed once is installed everywhere, a plugin a repository enables in its `.claude/settings.json` loads under every account, and no account shows `failed to load` for a plugin another account fetched. Whether a plugin is on comes from `settings.json`, which is shared already. Claude Code writes into that directory from every account, which is the same situation as several terminals of one account.
+
+Per account, on purpose: the credential, `.claude.json` (sessions, per-project trust, servers added with `claude mcp add`), history, and the `claude agents` fleet view with its background jobs. Claude Code keeps that registry inside the config directory, so a fleet view opened as one account lists that account's sessions only.
 
 | What | Shared? | How |
 |---|---|---|
 | `settings.json`, `mcp.json` | yes | `--settings` / `--mcp-config` flags on every launch |
 | `CLAUDE.md`, commands, agents, skills, output styles | yes | symlinks into each account dir |
 | per-repo memory | yes | symlink to `~/.claude/projects/<repo>/memory` |
-| login, `.claude.json`, plugins, sessions, fleet view | no | per account dir |
+| plugins | yes | symlink to `~/.claude/plugins` |
+| login, `.claude.json`, sessions, fleet view | no | per account dir |
 
 ## Daily use
 

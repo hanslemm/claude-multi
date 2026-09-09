@@ -54,11 +54,15 @@ Sharing model:
   (`--mcp-config`). Claude Code rewrites `settings.json` when `/config` changes something; that would
   replace a symlink with a plain file and silently un-share it.
 - **Per account, never shared**: `.claude.json` (session, per-project trust, user-scope MCP servers
-  added with `claude mcp add`), `plugins/`, history, sessions, credentials.
+  added with `claude mcp add`), history, sessions, credentials.
 - **Per-repo auto-memory IS shared**: for every `~/.claude/projects/<p>/memory/` that exists as a
   real directory, each account gets `projects/<p>/memory` as a symlink to it. The canonical folder
   stays in `~/.claude` (nothing there is moved). A repo that gains memory later needs a re-run or
   `--relink`.
+- **Plugins ARE shared (v1.3, §14)**: when `~/.claude/plugins` is a real directory (the default
+  account has started Claude Code once), each account gets `plugins` as a symlink to it. One installed
+  set, marketplace list and cache for every account; which plugins are enabled comes from
+  `settings.json`, which is shared already. The canonical dir stays in `~/.claude`.
 
 Seeding (`~/.claude-shared`, first run only, each item independently, never overwritten afterwards):
 `settings.json` = copy of `~/.claude/settings.json` (else `{}`); `mcp.json` = `{"mcpServers": …}`
@@ -80,13 +84,13 @@ claude-multi-setup.sh --help | -h | --version
 ```
 
 - `setup` (default): discover accounts (§4), seed shared config, create account dirs + symlinks +
-  memory links, write `accounts.tsv`, generate `aliases.sh`, self-install, handle the rc line, print
+  memory + plugins links, write `accounts.tsv`, generate `aliases.sh`, self-install, handle the rc line, print
   the summary. Idempotent: a re-run with nothing new prints `No changes — everything was already in
   place.` and leaves the filesystem byte-identical (mtimes included).
 - `--dry-run`: every change is printed as `  [dry-run] would <action>`; nothing is created, not even
   `~/.claude-multi`.
-- `--relink`: only (re)create the shared + memory symlinks inside the account dirs that already
-  exist. No discovery, no aliases regeneration.
+- `--relink`: only (re)create the shared + memory + plugins symlinks inside the account dirs that
+  already exist. No discovery, no aliases regeneration.
 - `--rc` / `--rc=FILE`: append the source line (§7) to the rc file, once. Without the flag the rc
   file is NEVER touched; the summary prints the line to add instead.
 - `--no-input`: never prompt (the interactive email prompt in §4 step 4 is skipped; exit 1 with the
@@ -160,9 +164,12 @@ is already taken (registry, or another new email's base) gets `-<first domain la
 For each account: `mkdir -p` + chmod 700; for each shared name, `<acct>/<name>` → absolute target.
 Link handling: correct symlink → nothing; symlink to another target → repointed (`repoint`);
 EMPTY real directory → replaced (`replace empty dir`); non-empty real file/dir → left alone with
-`warning: <path> exists and is not a symlink; left alone (move it aside, then --relink, to share it)`.
+`warning: <path> exists and is not a symlink; left alone (move it aside, e.g. mv '<path>' '<path>.unshared', then --relink, to share it)`.
 Memory: for each `~/.claude/projects/*/memory` real dir, `mkdir -p <acct>/projects/<p>` (700) and
 link `<acct>/projects/<p>/memory` with the same rules.
+Plugins (§14): when `~/.claude/plugins` is a real dir, link `<acct>/plugins` to it with the same rules;
+when it is not, link nothing and warn once per run: `warning: ~/.claude/plugins does not exist yet, so
+plugins are not shared; start plain claude once, then run --relink`.
 
 ## 6. `aliases.sh` — one file for zsh and bash
 
@@ -226,12 +233,13 @@ Contents:
 - Change lines: `  + <action>`; dry-run: `  [dry-run] would <action>`; warnings: `  warning: …` on
   stderr; the counter line `No changes — everything was already in place.` when nothing changed.
 - Summary (setup): `Accounts (source: <source>):` + one `  <slot>  claude-<slug>  <email>  <dir>`
-  line each; `Shared config: …`; `Shared memory: …`; `Aliases: …`; `rc file: …`; then
+  line each; `Shared config: …`; `Shared memory: …`; `Shared plugins: …` (v1.3, §14); `Aliases: …`; `rc file: …`; then
   `One-time login, once per account …:` with `  claude-multi login <slug>  (<email>)` or
   `(already logged in)`.
 - `status` lines, each `key: value` on its own line, in this order: `script:`, `version:`, `cswap:`
   (`found at <path>` | `not found (manual account list)`), `shared:` (`ok <dir>` | `missing`),
   `aliases:` (`ok <file>` | `missing`), `settings:` (`<n> in sync, <p> pending, <m> modified` — v1.2, §13),
+  `plugins:` (`<n> shared, <o> own, <p> pending` | `<dir> missing (start plain claude once, then relink)` — v1.3, §14),
   `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
   `terminal:` (`default` | `<slug> (<email>)` | `unmanaged <dir>`), then
   `account: <slot> <slug> <email> <logged-in|not-logged-in>` per registered account, then
@@ -254,7 +262,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 
 | # | Case | Asserts |
 |---|---|---|
-| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-betterdoc info hans-proton`, 5 symlinks each to absolute targets, shared seeded (settings byte-identical, skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
+| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-betterdoc info hans-proton`, 6 symlinks each to absolute targets (5 into `~/.claude-shared`, `plugins` into `~/.claude/plugins`), shared seeded (settings byte-identical, skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
 | T2 | export-only cswap (`list --json` fails) | same result, source `cswap export`, no `claude-multi.*` left under `$TMPDIR` |
 | T3 | ANSI-only cswap | same result, source scraped |
 | T4 | jq + python3 shadowed with failing stubs | same 4 accounts; warning about mcp.json |
@@ -478,3 +486,55 @@ permission mode, workflow subagents included, and a running session keeps the fl
 (`warning: account <slug> sets permissions.blockReadsOutsideWorkingDirectories: true …`, naming the
 file and the two-step fix). T24 asserts the warning on all three paths and for the shared file.
 
+
+## 14. v1.3 — plugins follow the account, not the machine
+
+Measured 2026-09-09 (Claude Code 2.1.266): `/plugin` in a claude-multi account listed three plugins as
+`failed to load · 1 error`. They were user-scope plugins the default account had installed and then
+disabled: the seeded `settings.json` carries the whole `enabledPlugins` map, `false` entries included,
+so every account inherits the *names*, but each account had its own empty `plugins/`. On first start
+Claude Code materialised the plugins whose source lives inside the official marketplace repo and skipped
+those fetched from separate git repositories, and a plugin that is listed but has no install behind it
+is what `/plugin` shows as an error. Repo-scoped plugins had the same shape of problem: a plugin enabled
+in a repo's `.claude/settings.json` is recorded in `installed_plugins.json` (with its `projectPath`),
+which lived in one account only, so every other account had to install it again per repo and worktree.
+
+### 14.1 The link
+
+`<acct>/plugins` → `~/.claude/plugins`, with the §5 link rules, whenever `~/.claude/plugins` is a real
+directory. The whole directory is shared: `installed_plugins.json` (user, project and local scope
+records), `known_marketplaces.json`, `marketplaces/`, `cache/` and `data/`. Enable state is not in that
+directory — `enabledPlugins` lives in `settings.json` — so the accounts agree on what is installed and
+the shared settings file says what is on. A `/plugin install` inside an account records the install for
+everyone and writes `enabledPlugins.<name>: true` into that account's own `settings.json`, so it is on
+there only until the shared file says so too (§13, `sync --force <slug>` after editing the shared file).
+
+Why the whole directory and why a symlink: Claude Code writes into `plugins/` (installs, marketplace
+refreshes at startup, the in-use sweep). Sharing only `cache/` would leave the tool rewriting Claude
+Code's own registry files; sharing the directory makes N accounts look exactly like N terminals of one
+account, which Claude Code already supports. The canonical dir stays in `~/.claude` (as memory does):
+nothing is moved, and the default account keeps working if claude-multi is removed. The tool never
+writes into `~/.claude/plugins`; sessions of the other accounts do, as they do into shared memory.
+
+Not covered: `~/.claude/plugins` absent (the default account has never started Claude Code) — nothing is
+linked, one warning per run names the dir and the fix (start plain `claude` once, then `--relink`);
+`status` prints `plugins: <dir> missing (…)`. An account that already has a real `plugins/` (set up before
+v1.3) is left alone with the §5 warning, which now prints the `mv` that moves it aside; the user runs it
+with no session of that account open, then `--relink`. Its own `data/` is kept in the moved-aside dir.
+
+### 14.2 Output
+
+Summary: `Shared plugins: ~/.claude/plugins, linked from each account's plugins/ (…)` or `Shared plugins:
+not yet — ~/.claude/plugins does not exist (start plain claude once, then --relink)`. `status`: `plugins: <n>
+shared, <o> own, <p> pending` (shared = symlink to `~/.claude/plugins`; own = anything else present;
+pending = absent, linked on the next setup or relink) between `settings:` and `rc:`, or the `missing` form.
+
+### 14.3 Tests
+
+| # | Case | Asserts |
+|---|---|---|
+| T26 | shared plugins link | `~/.claude/plugins` absent: setup links nothing, exits 0, warns once for three accounts (names the dir, says `not shared`), summary `Shared plugins: not yet`, `status` prints the `missing` form; then with `~/.claude/plugins` present: alice's empty real dir replaced (`replace empty dir`), bob's non-empty dir left alone (`installed_plugins.json` and cache intact, warning names the path, `left alone`, and `mv '<path>' '<path>.unshared'`), carol linked, summary names `~/.claude/plugins`, `status` `2 shared, 1 own, 0 pending`; bob's dir moved aside then `--relink`: linked, exactly one `+ link` line, no warning, moved-aside copy intact, `status` `3 shared, 0 own, 0 pending`; another `--relink` → `No changes`; `~/.claude` untouched throughout |
+
+T1 asserts the sixth link for every account, T16 and T21 the `plugins:` line and its place in the order.
+
+Version: 1.3.0 everywhere.

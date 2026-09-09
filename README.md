@@ -10,7 +10,7 @@ terminal switches every terminal — a personal and a work subscription, or seve
 spread rate limits, cannot run side by side. Claude Code's own isolation mechanism is
 `CLAUDE_CONFIG_DIR`: it relocates the whole config tree and keys the credential to it. claude-multi
 gives every account its own `CLAUDE_CONFIG_DIR`, a launcher, and a way to pin a terminal to it, while
-settings, MCP servers, CLAUDE.md, commands, agents, skills and per-repo memory stay shared.
+settings, MCP servers, CLAUDE.md, commands, agents, skills, plugins and per-repo memory stay shared.
 
 ## Quick start
 
@@ -60,7 +60,7 @@ never copies a login.
 | `claude-multi sync [--force [slug]] [--merge-local]` | copy the shared `settings.json` into every account's own file (permissions, auto mode, hooks); `--force` overwrites a copy edited through `/config`; `--merge-local` folds `~/.claude/settings.local.json` into the shared file first |
 | `claude-multi update [--dry-run]` | download the latest script from GitHub (`CLAUDE_MULTI_REF` picks a branch or tag), install it and re-run setup so `aliases.sh` gains any new commands |
 | `claude-multi setup [--dry-run] [--rc[=FILE]] [--no-input]` | (re)run setup; `claude-multi help` lists the verbs, `~/.claude-multi/claude-multi-setup.sh --help` the flags |
-| `claude-multi relink` | recreate the shared + memory symlinks inside the existing account dirs (a repo that gained memory later) |
+| `claude-multi relink` | recreate the shared + memory + plugins symlinks inside the existing account dirs (a repo that gained memory later; an account that moved its own `plugins/` aside) |
 | `claude-multi help` | the verb table |
 
 `claude-multi` is a shell function defined in `aliases.sh`, so it needs a sourced terminal; the
@@ -80,7 +80,8 @@ emails, or takes them from `add <email>` or the `ACCOUNT_ROWS` environment varia
 | Per-repo auto-memory | `~/.claude/projects/<p>/memory/` | symlinked into every account (`projects/<p>/memory`) |
 | Login / credentials | `~/.claude-accounts/<slug>/` (+ Keychain on macOS) | per account, never copied |
 | `.claude.json` (sessions, per-project trust, `claude mcp add` servers) | per account dir | per account |
-| `plugins/`, history, sessions | per account dir | per account; plugins install themselves on first start |
+| Plugins (`plugins/`: installed set, marketplaces, cache) | `~/.claude/plugins` | symlinked into every account, once the default account has started Claude Code; which plugins are enabled comes from the shared `settings.json` |
+| history, sessions | per account dir | per account |
 | Trust dialog per repository | each account's `.claude.json` | per account; accept once per repo per account |
 | `claude agents` fleet view, background jobs, `/tasks`, `--resume`, the daemon | per account dir | per account — Claude Code keeps that registry inside the config dir, so a view opened as one account lists only that account's sessions and jobs; `cswap list` still shows every running instance, because it scans processes rather than a registry |
 | `~/.claude`, `~/.claude.json` | the default account | never modified; read once as the seed for `~/.claude-shared` |
@@ -166,6 +167,11 @@ or replace it with your own script, if you already have one. An unpinned session
 - **Memory is shared.** For every `~/.claude/projects/<p>/memory/` that exists, each account gets a
   symlink to it. The canonical folder stays in `~/.claude`; nothing is moved. `claude-multi relink`
   picks up a repo that gained memory later.
+- **Plugins are shared.** Each account's `plugins/` is a symlink to `~/.claude/plugins`, so every account
+  has the same installed plugins, marketplaces and cache, including plugins a repository enables in its
+  `.claude/settings.json`; the shared `settings.json` says which are on. Claude Code writes into that
+  directory from every account, which is the same situation as several terminals of one account. If
+  `~/.claude/plugins` does not exist yet, start plain `claude` once, then `claude-multi relink`.
 - **Idempotent and safe.** A re-run with nothing new prints `No changes — everything was already in
   place.` and leaves the filesystem byte-identical. The tool never deletes an account dir, never
   overwrites a seeded shared file, never modifies `~/.claude` or `~/.claude.json`, never touches an
@@ -202,7 +208,7 @@ The difference is what each launch is:
   once and stays logged in, side by side, no rotation and nothing to capture back. Bare `claude` —
   and any script, editor integration or hook that runs `claude` — follows `cuse`, because the pin is
   an exported `CLAUDE_CONFIG_DIR`, not a wrapper around one command. Settings, MCP servers,
-  CLAUDE.md, commands, agents, skills and per-repo memory are shared by design; sessions, `--resume`,
+  CLAUDE.md, commands, agents, skills, plugins and per-repo memory are shared by design; sessions, `--resume`,
   the `claude agents` fleet view and background jobs are per account, which is Claude Code's own
   design for a config dir. None of it needs cswap installed.
 
@@ -217,8 +223,18 @@ default account) unless your rc file runs `cuse` itself.
 
 ### Where do plugins go?
 
-Per account, into `~/.claude-accounts/<slug>/plugins/`. The first start of an account installs them,
-so it may take a moment.
+Into `~/.claude/plugins`, the default account's directory; every account's `plugins/` is a symlink to it,
+so a plugin installed once is installed everywhere, and a plugin a repository enables in its
+`.claude/settings.json` loads under every account without a second install. Whether a plugin is *on* is
+another matter: that flag lives in `enabledPlugins` in `settings.json`, so to turn one on for every
+account add it to `~/.claude-shared/settings.json` and run `claude-multi sync`. `/plugin install` inside
+one account installs it for all but turns it on in that account's own settings file only.
+
+Accounts set up before v1.3 keep their own `plugins/`; setup and `claude-multi status` say so
+(`plugins: … own`) and the warning prints the `mv` that moves it aside. Close that account's sessions
+first, run the `mv`, then `claude-multi relink`. The moved-aside directory keeps that account's plugin
+data; delete it when you no longer want it. Until the default account has started Claude Code once,
+`~/.claude/plugins` does not exist and nothing is linked; `status` says `plugins: … missing`.
 
 ## Requirements
 
@@ -237,7 +253,8 @@ so it may take a moment.
 2. `rm -rf ~/.claude-multi` (script, aliases, account registry).
 3. `rm -rf ~/.claude-shared` — only if you do not want the shared settings, MCP config and CLAUDE.md
    any more; they are copies, the originals in `~/.claude` are untouched.
-4. `~/.claude-accounts/<slug>/` holds each account's login, sessions and plugins. Delete a directory
+4. `~/.claude-accounts/<slug>/` holds each account's login and sessions (`plugins` is a symlink into
+   `~/.claude`, so removing the account dir removes no plugin). Delete a directory
    only when you are done with that account (on macOS, also remove its `Claude Code-credentials`
    Keychain entry). The tool itself never deletes these.
 
@@ -245,7 +262,7 @@ so it may take a moment.
 
 ## Development
 
-- `tests/harness.sh` — the test matrix (T1–T23 in the contract); builds a throwaway `HOME` per case
+- `tests/harness.sh` — the test matrix (T1–T26 in the contract); builds a throwaway `HOME` per case
   with a stub `claude` and a stub `cswap`. Run it with `/bin/bash tests/harness.sh` (bash 3.2 on
   macOS) and with `bash tests/harness.sh`.
 - CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -S warning -s bash` on the script and
