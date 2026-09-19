@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) for claude-multi-setup.sh.
+# tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
+# for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
 #   SCRIPT     script under test (default: skills/claude-multi/scripts/claude-multi-setup.sh next to this repo)
@@ -35,7 +36,7 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27"
 
 TOTAL_OK=0
 TOTAL_FAIL=0
@@ -344,9 +345,10 @@ EOF
 new_home() { # a fresh HOME with bin/claude, a seeded ~/.claude, ~/.claude.json and ~/.zshrc; no cswap yet
   T=$(mktemp -d "$TMP_BASE/cmh.XXXXXX") || { printf '  FAIL: mktemp failed\n'; exit 1; }
   H="$T/home"
-  mkdir -p "$H/bin" "$T/tmp" "$H/.claude/skills/demo" "$H/.claude/commands"
+  mkdir -p "$H/bin" "$T/tmp" "$H/.claude/skills/demo" "$H/.claude/commands" "$H/.claude/plugins"
   cp "$FIX/claude" "$H/bin/claude"; chmod 755 "$H/bin/claude"
   cp "$FIX/seed-settings.json" "$H/.claude/settings.json"
+  printf '{"version": 2, "plugins": {}}\n' > "$H/.claude/plugins/installed_plugins.json"   # the default account has started once
   cp "$FIX/seed-claude.json" "$H/.claude.json"
   printf '# seed CLAUDE.md\n' > "$H/.claude/CLAUDE.md"
   printf '%s\n' '---' 'name: demo' '---' "A demo skill (Alice's)." > "$H/.claude/skills/demo/SKILL.md"
@@ -425,13 +427,14 @@ assert_rc_untouched() {
   assert_same_file "~/.zshrc untouched" "$T/zshrc.seed" "$H/.zshrc"
   assert_absent "no ~/.bashrc created" "$H/.bashrc"
 }
-assert_account_dir() { # slug → dir 700 + 5 absolute symlinks
+assert_account_dir() { # slug → dir 700 + 5 absolute symlinks into ~/.claude-shared + plugins -> ~/.claude/plugins
   local slug=$1 n
   assert_dir "dir $slug exists" "$H/.claude-accounts/$slug"
   assert_mode "dir $slug is mode 700" "$H/.claude-accounts/$slug" "drwx------"
   for n in $SHARED_NAMES; do
     assert_link_to "$slug/$n -> shared (absolute)" "$H/.claude-accounts/$slug/$n" "$H/.claude-shared/$n"
   done
+  assert_link_to "$slug/plugins -> ~/.claude/plugins (absolute)" "$H/.claude-accounts/$slug/plugins" "$H/.claude/plugins"
 }
 assert_registry_row() { # slot email slug
   assert_file_line "accounts.tsv row $1 $2 $3" "$H/.claude-multi/accounts.tsv" "$1${TAB}$2${TAB}$3"
@@ -877,7 +880,8 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   assert_rc "status on a fresh HOME" 0
   assert_file_empty "status prints nothing on stderr" "$T/err"
   order_fresh=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings rc terminal next " "$order_fresh"
+  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins rc terminal next " "$order_fresh"
+  out_line "plugins: nothing registered yet" "plugins: 0 shared, 0 own, 0 pending"
   out_line "cswap found" "cswap: found at $H/bin/cswap"
   out_line "shared missing" "shared: missing"
   out_line "aliases missing" "aliases: missing"
@@ -892,7 +896,8 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   run_script -- status
   assert_rc "status after setup" 0
   order_setup=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings rc terminal account account account account next " "$order_setup"
+  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order_setup"
+  out_line "plugins: every account linked" "plugins: 4 shared, 0 own, 0 pending"
   assert_true "script: names an existing file" test -f "$(sed -n 's/^script: //p' "$T/out")"
   out_matches "version: has a value" '^version: [^ ]'
   out_line "shared ok" "shared: ok $H/.claude-shared"
@@ -1220,7 +1225,7 @@ case_T21() { # status --verify
   run_script -- status --verify
   assert_rc "status --verify" 0
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status --verify key order" "script version cswap shared aliases settings rc terminal account account account account next " "$order"
+  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
   out_line "verified: hans-betterdoc not logged in" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
@@ -1563,8 +1568,112 @@ case_T25() { # settings.local.json is folded into the shared file
   assert_rc_untouched
 }
 
+case_T26() { # shared plugins link (§14): ~/.claude/plugins absent, then present; empty / non-empty account dirs; --relink after mv
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com${NL}3${TAB}carol@example.com"
+  local ap="$H/.claude-accounts/alice/plugins" bp="$H/.claude-accounts/bob/plugins" cp_="$H/.claude-accounts/carol/plugins"
+  set_cswap absent
+  # 1. the default account has never started Claude Code: no ~/.claude/plugins → nothing linked, one warning, exit 0
+  rm -rf "$H/.claude/plugins"; snapshot_seed; touch "$T/stamp-seed"
+  mkdir -p "$ap"                                                                    # alice: EMPTY real dir
+  mkdir -p "$bp/cache/m/p"; printf 'x\n' > "$bp/cache/m/p/f"                          # bob: non-empty real dir
+  printf '{"version": 2, "plugins": {"p@m": []}}\n' > "$bp/installed_plugins.json"
+  cp "$bp/installed_plugins.json" "$T/bob-plugins.before"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup without ~/.claude/plugins (a warning, not an error)" 0
+  err_has "warning names ~/.claude/plugins" "$H/.claude/plugins"
+  err_has "warning says plugins are not shared yet" "not shared"
+  assert_eq "exactly one plugins warning for three accounts" "1" "$(count_matches "$T/err" 'plugins')"
+  assert_absent "carol/plugins not created" "$cp_"
+  assert_dir "alice/plugins left as a real dir" "$ap"
+  assert_dir "bob/plugins left as a real dir" "$bp"
+  out_has "summary says plugins are not shared yet" "Shared plugins: not yet"
+  assert_seed_untouched
+  run_script -- status
+  assert_rc "status without ~/.claude/plugins" 0
+  out_line "status: plugins line names the missing dir" "plugins: $H/.claude/plugins missing (start plain claude once, then relink)"
+  # 2. the default account has started once (~/.claude/plugins exists): setup links it; alice replaced, bob warned + intact, carol linked
+  mkdir -p "$H/.claude/plugins"; printf '{"version": 2, "plugins": {}}\n' > "$H/.claude/plugins/installed_plugins.json"
+  snapshot_seed; touch "$T/stamp-seed"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup with ~/.claude/plugins (bob's warning is not an error)" 0
+  assert_link_to "alice: empty dir replaced by the link" "$ap" "$H/.claude/plugins"
+  out_has "change line says 'replace empty dir'" "replace empty dir"
+  assert_link_to "carol: linked" "$cp_" "$H/.claude/plugins"
+  assert_dir "bob: non-empty dir left alone" "$bp"
+  assert_same_file "bob's installed_plugins.json intact" "$T/bob-plugins.before" "$bp/installed_plugins.json"
+  assert_exists "bob's cache intact" "$bp/cache/m/p/f"
+  err_has "warning names bob's path" "$bp"
+  err_has "warning says left alone" "left alone"
+  err_has "warning prints the mv that moves it aside" "mv '$bp' '$bp.unshared'"
+  out_has "summary: Shared plugins line names ~/.claude/plugins" "Shared plugins: $H/.claude/plugins"
+  assert_seed_untouched
+  run_script -- status
+  out_line "status: 2 shared, 1 own" "plugins: 2 shared, 1 own, 0 pending"
+  # 3. bob moves the dir aside (no session of that account running) and relinks
+  mv "$bp" "$bp.unshared"
+  run_script -- --relink
+  assert_rc "--relink after the mv" 0
+  assert_link_to "bob: linked by --relink" "$bp" "$H/.claude/plugins"
+  assert_same_file "bob's moved-aside registry intact" "$T/bob-plugins.before" "$bp.unshared/installed_plugins.json"
+  assert_eq "exactly one change line" "1" "$(count_matches "$T/out" '^  \+ ')"
+  out_matches "the change line is bob's plugins link" '^  \+ link .*bob/plugins'
+  assert_file_empty "no warning once every account is linked" "$T/err"
+  run_script -- status
+  out_line "status: 3 shared" "plugins: 3 shared, 0 own, 0 pending"
+  run_script -- --relink
+  out_line "another --relink is a no-op" "No changes — everything was already in place."
+  assert_seed_untouched
+}
+
+case_T27() { # executable launchers (§15): a real file per account, the function delegates, remove prunes
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  local bin="$H/.claude-multi/bin"
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+
+  assert_dir "bin/ is a real directory" "$bin"
+  assert_exists "alice launcher exists" "$bin/claude-alice"
+  assert_exists "bob launcher exists" "$bin/claude-bob"
+  assert_mode "alice launcher is executable" "$bin/claude-alice" "-rwxr-xr-x"
+  assert_first_line "alice launcher is a sh script" "$bin/claude-alice" "#!/bin/sh"
+
+  # The point of the file: anything that spawns a process can use it. `env -i` is deliberate --
+  # an empty environment proves the launcher needs neither aliases.sh nor an interactive shell,
+  # which is exactly what cron, CI and a tool reading a command out of config give it.
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" "$bin/claude-alice" hello > "$T/launch.out" 2>&1
+  local lrc=$?
+  assert_eq "launcher exit 0" "0" "$lrc"
+  assert_file_has "launcher pinned alice's config dir" "$T/launch.out" \
+    "CLAUDE_CONFIG_DIR=$H/.claude-accounts/alice"
+  assert_file_has "launcher passed the argument through" "$T/launch.out" "hello"
+  assert_file_has "launcher handed on the shared mcp config" "$T/launch.out" "mcp.json"
+
+  # ANTHROPIC_API_KEY outranks the subscription login; the launcher must remove it.
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" \
+    ANTHROPIC_API_KEY=sk-should-not-survive ANTHROPIC_AUTH_TOKEN=t CLAUDE_CODE_OAUTH_TOKEN=o \
+    "$bin/claude-alice" > "$T/launch-key.out" 2>&1
+  assert_file_has "launcher unset ANTHROPIC_API_KEY" "$T/launch-key.out" "KEY=<unset>"
+  assert_file_has "launcher unset ANTHROPIC_AUTH_TOKEN" "$T/launch-key.out" "AUTH_TOKEN=<unset>"
+  assert_file_has "launcher unset CLAUDE_CODE_OAUTH_TOKEN" "$T/launch-key.out" "OAUTH=<unset>"
+
+  # One implementation: the shell function is a wrapper, not a copy.
+  assert_file_has "aliases.sh knows the bin dir" "$H/.claude-multi/aliases.sh" "CLAUDE_MULTI_BIN_DIR"
+  assert_file_has "_claude_multi_run delegates to the launcher" "$H/.claude-multi/aliases.sh" \
+    '"$CLAUDE_MULTI_BIN_DIR/claude-$slug"'
+  assert_file_lacks "the run helper no longer execs claude itself" "$H/.claude-multi/aliases.sh" \
+    'exec "$bin" --mcp-config'
+
+  # A missing account must not leave a launcher that would pin a directory that is gone.
+  run_script -- remove bob@example.com
+  assert_rc "remove bob" 0
+  assert_absent "bob's launcher was pruned" "$bin/claude-bob"
+  assert_exists "alice's launcher survived" "$bin/claude-alice"
+}
+
 case_title() {
   case "$1" in
+    T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -1590,6 +1699,7 @@ case_title() {
     T23) printf 'update via CLAUDE_MULTI_UPDATE_URL=file:// through a stub curl' ;;
     T24) printf 'settings sync into each account (untouched, ours, modified, --force, dry-run)' ;;
     T25) printf 'settings.local.json merged into the shared file (seed, --merge-local, no tools)' ;;
+    T26) printf 'shared plugins link (~/.claude/plugins absent then present; empty / non-empty account dirs; --relink after mv)' ;;
     *) printf '?' ;;
   esac
 }
@@ -1622,8 +1732,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-5]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T23)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-7]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T27)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES

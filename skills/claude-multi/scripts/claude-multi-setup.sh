@@ -8,15 +8,21 @@
 #                                       .claude.json). Never deleted by this script.
 #   ~/.claude-shared/                   settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/,
 #                                       output-styles/ — seeded ONCE by COPYING from ~/.claude, never overwritten.
+#   ~/.claude-multi/bin/claude-<slug>   an EXECUTABLE launcher per account: a real file, so cron, CI, an editor
+#                                       or any tool that reads a command out of configuration can run it —
+#                                       execvp cannot see a shell function. The functions below delegate to it.
 #   ~/.claude-multi/aliases.sh          claude-<slug> launchers, claude<N> slot aliases, cuse, cwho and the
 #                                       claude-multi umbrella function (zsh + bash)
 #   ~/.claude-multi/accounts.tsv        slot<TAB>email<TAB>slug registry; a slug never changes once assigned
 #   ~/.claude-multi/claude-multi-setup.sh   self-installed copy of this script (the stable path)
 #   <account>/projects/<repo>/memory -> ~/.claude/projects/<repo>/memory   per-repo auto-memory, shared
+#   <account>/plugins -> ~/.claude/plugins   one installed plugin set, marketplace list and cache for every account (v1.3)
 #
 # Sharing model: CLAUDE.md + the four directories are SYMLINKED into every account dir (Claude only reads
 # them). settings.json and mcp.json are passed as --settings / --mcp-config flags, never symlinked, because
-# Claude Code rewrites settings.json on /config and would replace a symlink with a plain file.
+# Claude Code rewrites settings.json on /config and would replace a symlink with a plain file. plugins/ is
+# symlinked to the default account's ~/.claude/plugins (§14): Claude Code writes there, but concurrent writers
+# are what several terminals of one account already are, and the canonical dir never moves.
 #
 # Discovery: $ACCOUNT_ROWS if set, else cswap (`list --json`, `export <tmp>`, ANSI-stripped `list`), then the
 # union with accounts.tsv rows that carry a slot, then an interactive prompt (reads /dev/tty), then an error.
@@ -36,7 +42,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.2.2"
+VERSION="1.4.0"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -44,6 +50,7 @@ ACCOUNTS_ROOT="$HOME/.claude-accounts"
 SHARED_DIR="$HOME/.claude-shared"
 MULTI_DIR="$HOME/.claude-multi"
 ALIASES_FILE="$MULTI_DIR/aliases.sh"
+BIN_DIR="$MULTI_DIR/bin"                   # executable launchers (§15), one per account
 LEGACY_ALIASES_FILE="$MULTI_DIR/aliases.zsh"
 REGISTRY_FILE="$MULTI_DIR/accounts.tsv"
 SYNC_FILE="$MULTI_DIR/settings-sync.tsv"   # slug<TAB>cksum of the settings.json last written into that account (§13)
@@ -129,7 +136,7 @@ commands:
 
 flags:
   --dry-run      print every change as '[dry-run] would …'; create nothing
-  --relink       only (re)create the shared + memory symlinks in the account dirs that already exist
+  --relink       only (re)create the shared + memory + plugins symlinks in the account dirs that already exist
   --rc[=FILE]    append the source line to the rc file (by \$SHELL, or FILE), once; never touched otherwise
   --no-input     never prompt (scripted / AI-driven runs); exit 1 with instructions instead
 
@@ -180,7 +187,7 @@ ensure_link() { # link target
     did "replace empty dir $link with link -> $target"
     dry || { rmdir -- "$link" && ln -s -- "$target" "$link"; } || die "cannot replace $link"
   elif [ -e "$link" ]; then
-    warn "$link exists and is not a symlink; left alone (move it aside, then --relink, to share it)"
+    warn "$link exists and is not a symlink; left alone (move it aside, e.g. mv '$link' '$link.unshared', then --relink, to share it)"
   else
     did "link $link -> $target"
     dry || ln -s -- "$target" "$link" || die "cannot link $link"
@@ -210,6 +217,21 @@ link_memory_into() { # account-dir — every repo whose auto-memory exists in ~/
     ensure_dir "$1/projects/$p" 700
     ensure_link "$1/projects/$p/memory" "$m"
   done
+}
+
+# Plugins (§14): <acct>/plugins -> ~/.claude/plugins, so every account has the default account's installed set,
+# marketplace list and cache (which of them are enabled comes from settings.json, which is shared already).
+# ~/.claude/plugins exists once the default account has started Claude Code; until then nothing is linked and
+# the run warns once. A real (non-empty) plugins dir in an account is left alone by ensure_link's rule.
+PLUGINS_WARNED=0
+plugins_seed_present() { [ -d "$SEED_DIR/plugins" ] && [ ! -L "$SEED_DIR/plugins" ]; }
+link_plugins_into() { # account-dir
+  if plugins_seed_present; then
+    ensure_link "$1/plugins" "$SEED_DIR/plugins"
+  elif [ "$PLUGINS_WARNED" = 0 ]; then
+    PLUGINS_WARNED=1
+    warn "$SEED_DIR/plugins does not exist yet, so plugins are not shared; start plain claude once, then run --relink"
+  fi
 }
 
 logged_in() { # slug — the .claude.json heuristic (no network, no claude binary needed)
@@ -833,6 +855,14 @@ gen_aliases() { # → stdout
 CLAUDE_MULTI_ACCOUNTS_ROOT="\$HOME/.claude-accounts"
 CLAUDE_MULTI_SHARED_DIR="\$HOME/.claude-shared"
 CLAUDE_MULTI_SETUP="\$HOME/.claude-multi/claude-multi-setup.sh"
+CLAUDE_MULTI_BIN_DIR="\$HOME/.claude-multi/bin"
+# The launchers in there are real files, so anything that spawns a process can run them; a shell
+# function is invisible to execvp. Appended rather than prepended: these names belong to
+# claude-multi alone, so there is nothing to shadow and no reason to outrank the rest of PATH.
+case ":\$PATH:" in
+  *":\$CLAUDE_MULTI_BIN_DIR:"*) ;;
+  *) PATH="\$PATH:\$CLAUDE_MULTI_BIN_DIR"; export PATH ;;
+esac
 # bash only expands aliases in interactive shells unless told otherwise; zsh skips this line (no BASH_VERSION).
 [ -n "\${BASH_VERSION:-}" ] && shopt -s expand_aliases
 
@@ -884,27 +914,17 @@ _claude_multi_list() {
 }
 
 _claude_multi_run() { # <slug> [args…]
-  local slug="$1" dir bin
+  local slug="$1" launcher
   shift
-  dir="$CLAUDE_MULTI_ACCOUNTS_ROOT/$slug"
-  if [ -n "${ZSH_VERSION:-}" ]; then bin=$(whence -p claude 2>/dev/null); else bin=$(type -P claude 2>/dev/null); fi
-  if [ -z "$bin" ]; then
-    printf '%s\n' "claude-multi: 'claude' is not in PATH" >&2
-    return 127
-  fi
-  if [ ! -d "$dir" ]; then
-    printf '%s\n' "claude-multi: $dir is missing — re-run $CLAUDE_MULTI_SETUP" >&2
+  launcher="$CLAUDE_MULTI_BIN_DIR/claude-$slug"
+  if [ ! -x "$launcher" ]; then
+    printf '%s\n' "claude-multi: $launcher is missing — re-run $CLAUDE_MULTI_SETUP" >&2
     return 1
   fi
-  (
-    # ANTHROPIC_API_KEY outranks the subscription login in credential precedence: never let it bill the API.
-    # CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_AUTH_TOKEN override the directory's login the same way.
-    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
-    export CLAUDE_CONFIG_DIR="$dir"
-    # Root options must precede any subcommand, and --settings sits right after the VARIADIC --mcp-config so it
-    # terminates that list instead of a user argument being swallowed.
-    exec "$bin" --mcp-config "$CLAUDE_MULTI_SHARED_DIR/mcp.json" --settings "$CLAUDE_MULTI_SHARED_DIR/settings.json" "$@"
-  )
+  # Deliberately a wrapper and not a second copy: the launcher is a real file so that execvp can
+  # reach it (cron, CI, an editor, a tool reading a command out of config), and everything the
+  # account needs — the shared flags, the unset credentials, resolving claude — lives there, once.
+  "$launcher" "$@"
 }
 
 cuse() { # <slug|slot|default>
@@ -974,7 +994,7 @@ claude-multi() { # <verb> [args…] — a function, so `use` can change THIS she
         '  add <email> [--slot N]            register an account and create its dir + launcher' \
         '  remove <email>        forget an account (its dir and login are kept)' \
         '  setup [--dry-run] [--rc[=FILE]] [--no-input]   re-run the setup (discover, seed, link, aliases)' \
-        '  relink                only (re)create the shared + memory symlinks (= setup --relink)' \
+        '  relink                only (re)create the shared + memory + plugins symlinks (= setup --relink)' \
         '  update [--dry-run]    fetch the latest claude-multi-setup.sh from GitHub and re-run setup' \
         '  sync [--force [slug]] copy the shared settings.json into every account, so bare claude after cuse gets the same permissions' \
         '  help                  this table' \
@@ -1003,6 +1023,61 @@ BODY
   while [ $i -lt ${#SLUGS[@]} ]; do
     printf "alias claude%s='claude-%s'\n" "${SLOTS[$i]}" "${SLUGS[$i]}"
     i=$((i + 1))
+  done
+}
+
+# ---------- executable launchers (§15): one real file per account ----------
+# execvp cannot see a shell function, so claude-<slug> as a function is unusable from cron, CI, an
+# editor, or any tool that takes a command out of configuration. These files close that gap, and
+# _claude_multi_run delegates to them so the behaviour is defined in exactly one place.
+gen_launcher() { # <slug> → stdout
+  cat <<LAUNCH
+#!/bin/sh
+# ~/.claude-multi/bin/claude-$1 — GENERATED by ~/.claude-multi/$SCRIPT_NAME (claude-multi $VERSION).
+# Do not edit; re-run the script. Runs Claude Code as the $1 account, for this command only.
+set -u
+dir="\$HOME/.claude-accounts/$1"
+shared="\$HOME/.claude-shared"
+bin=\$(command -v claude 2>/dev/null) || bin=''
+if [ -z "\$bin" ]; then
+  printf '%s\\n' "claude-multi: 'claude' is not in PATH" >&2
+  exit 127
+fi
+if [ ! -d "\$dir" ]; then
+  printf '%s\\n' "claude-multi: \$dir is missing — re-run \$HOME/.claude-multi/$SCRIPT_NAME" >&2
+  exit 1
+fi
+# ANTHROPIC_API_KEY outranks the subscription login in credential precedence: never let it bill the
+# API. CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_AUTH_TOKEN override the directory's login the same way.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+CLAUDE_CONFIG_DIR="\$dir"; export CLAUDE_CONFIG_DIR
+# Root options must precede any subcommand, and --settings sits right after the VARIADIC
+# --mcp-config so it terminates that list instead of a user argument being swallowed.
+exec "\$bin" --mcp-config "\$shared/mcp.json" --settings "\$shared/settings.json" "\$@"
+LAUNCH
+}
+
+write_launchers() {
+  local i slug keep="" f base
+  ensure_dir "$BIN_DIR" 755
+  mk_tmp
+  i=0
+  while [ $i -lt ${#SLUGS[@]} ]; do
+    slug=${SLUGS[$i]}
+    gen_launcher "$slug" > "$TMP_DIR/launcher" || die "cannot generate the launcher for $slug"
+    install_file "$TMP_DIR/launcher" "$BIN_DIR/claude-$slug" 755 "$BIN_DIR/claude-$slug"
+    keep="$keep claude-$slug"
+    i=$((i + 1))
+  done
+  # A removed account must not keep a launcher that pins a directory which is gone: it would fail
+  # with a confusing "missing" error long after anyone remembers removing the account.
+  for f in "$BIN_DIR"/claude-*; do
+    [ -f "$f" ] || continue
+    base=${f##*/}
+    case " $keep " in
+      *" $base "*) ;;
+      *) did "remove $f (no such account)"; dry || rm -f -- "$f" ;;
+    esac
   done
 }
 
@@ -1273,6 +1348,20 @@ settings_status_line() { # after load_registry: settings: <n> in sync, <p> pendi
   printf 'settings: %s in sync, %s pending, %s modified\n' "$n" "$p" "$m"
 }
 
+plugins_status_line() { # after load_registry: plugins: <n> shared, <o> own, <p> pending | plugins: <dir> missing (…)
+  local i=0 n=0 o=0 p=0 slug dir link
+  if ! plugins_seed_present; then printf 'plugins: %s missing (start plain claude once, then relink)\n' "$SEED_DIR/plugins"; return 0; fi
+  while [ $i -lt ${#REG_SLUGS[@]} ]; do
+    slug=${REG_SLUGS[$i]}; i=$((i + 1)); dir="$ACCOUNTS_ROOT/$slug"; link="$dir/plugins"
+    [ -n "$slug" ] && [ -d "$dir" ] || continue
+    if [ -L "$link" ] && [ "$(readlink -- "$link")" = "$SEED_DIR/plugins" ]; then n=$((n + 1))
+    elif [ -e "$link" ] || [ -L "$link" ]; then o=$((o + 1))
+    else p=$((p + 1))
+    fi
+  done
+  printf 'plugins: %s shared, %s own, %s pending\n' "$n" "$o" "$p"
+}
+
 merge_local_into_shared() { # settings.local.json → shared, deepmerge; rc 1 when no tool can merge
   local out
   [ -f "$SEED_LOCAL" ] || { note "no $SEED_LOCAL to merge"; return 0; }
@@ -1324,6 +1413,11 @@ summary() {
   say ""
   say "Shared config: $SHARED_DIR (settings.json + mcp.json via flags; CLAUDE.md, commands/, agents/, skills/, output-styles/ symlinked)"
   say "Shared memory: $SEED_DIR/projects/<repo>/memory, linked from each account's projects/<repo>/memory (re-run or --relink after a new repo gets memory)"
+  if plugins_seed_present; then
+    say "Shared plugins: $SEED_DIR/plugins, linked from each account's plugins/ (one installed set, marketplace list and cache; which are enabled comes from settings.json)"
+  else
+    say "Shared plugins: not yet — $SEED_DIR/plugins does not exist (start plain claude once, then --relink)"
+  fi
   say "Aliases: $ALIASES_FILE"
   say "rc file: $RC_STATE"
   say ""
@@ -1350,6 +1444,7 @@ cmd_status() {
   if [ -f "$ALIASES_FILE" ]; then printf 'aliases: ok %s\n' "$ALIASES_FILE"; else printf 'aliases: missing\n'; fi
   load_registry
   settings_status_line
+  plugins_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
   settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
@@ -1670,6 +1765,7 @@ cmd_relink() {
     note "$d"
     link_shared_into "$d"
     link_memory_into "$d"
+    link_plugins_into "$d"
   done
   say ""
   if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
@@ -1715,11 +1811,13 @@ cmd_setup() { # also the second half of add / remove
     ensure_dir "$ACCOUNTS_ROOT/${SLUGS[$i]}" 700
     link_shared_into "$ACCOUNTS_ROOT/${SLUGS[$i]}"
     link_memory_into "$ACCOUNTS_ROOT/${SLUGS[$i]}"
+    link_plugins_into "$ACCOUNTS_ROOT/${SLUGS[$i]}"
     i=$((i + 1))
   done
   sync_all_settings setup
   write_registry
   write_aliases
+  write_launchers
   write_legacy_shim
   self_install
   handle_rc
