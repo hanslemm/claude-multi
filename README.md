@@ -45,7 +45,7 @@ never copies a login.
 
 | Command | What it does |
 |---|---|
-| `claude-<slug> [args]` | start Claude Code as that account; extra arguments pass through to `claude` |
+| `claude-<slug> [args]` | start Claude Code as that account; extra arguments pass through to `claude`. Also a real executable at `~/.claude-multi/bin/claude-<slug>`, so cron, CI, editors and tools that take a command from configuration can use it too |
 | `claude1` … `claudeN` | the same, by slot number |
 | `cuse <slug\|slot>` | pin this terminal to an account (exports `CLAUDE_CONFIG_DIR` and `CLAUDE_MULTI_ACCOUNT`); plain `claude`, and any script that runs `claude`, then use it |
 | `cuse default` | unpin this terminal (back to `~/.claude`); both variables are unset |
@@ -69,6 +69,31 @@ which have to run in your shell to change it.
 
 `cswap` is optional: if it is in `PATH` its account list is discovered; otherwise the script asks for
 emails, or takes them from `add <email>` or the `ACCOUNT_ROWS` environment variable.
+
+## Running an account from another program
+
+`claude-<slug>` is both a shell function and a real file at `~/.claude-multi/bin/claude-<slug>`.
+
+The distinction matters the moment something other than your shell starts the process. `execvp` cannot
+see shell functions, so cron jobs, CI steps, editor integrations and any CLI that reads a command out
+of its own configuration would otherwise fail with `command not found` on a name that works when you
+type it. Point them at the file:
+
+```bash
+~/.claude-multi/bin/claude-<slug> -p < prompt.txt
+```
+
+The bin directory is appended to `PATH` when `aliases.sh` is sourced, so a bare `claude-<slug>` also
+works for anything launched from such a shell. Use the full path where no rc file is read — cron and
+launchd are the usual cases.
+
+Do not hand-roll the equivalent. The launcher unsets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+`CLAUDE_CODE_OAUTH_TOKEN` before exec, because any of them outranks the account's subscription login
+in credential precedence — an inlined `env CLAUDE_CONFIG_DIR=… claude` that forgets them keeps working
+and quietly bills the API instead.
+
+`cuse` remains shell-only by necessity: it exports `CLAUDE_CONFIG_DIR` into the *calling* shell, which
+no separate process can do.
 
 ## What is shared, what is not
 

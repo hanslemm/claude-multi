@@ -538,3 +538,68 @@ pending = absent, linked on the next setup or relink) between `settings:` and `r
 T1 asserts the sixth link for every account, T16 and T21 the `plugins:` line and its place in the order.
 
 Version: 1.3.0 everywhere.
+
+## 15. v1.4 — the launchers become real files
+
+`claude-<slug>` was a shell function, and a shell function only exists inside a shell that sourced
+`aliases.sh`. `execvp` cannot see one. So everything that starts a program without going through an
+interactive shell — cron, CI, an editor's "run this command" box, and any CLI that takes a command
+out of its own configuration — could not run Claude Code as a chosen account at all. The failure is
+`command not found` for a name that works perfectly when typed, which reads as a typo rather than as
+a category error.
+
+Measured 2026-09-18, with a tool whose config wanted a model command: `claude-hans-lemm-betterdoc -p`
+was rejected as not found, while `type` reported it as *"a shell function from
+~/.claude-accounts/<slug>/shell-snapshots/…"*. The workaround a user reaches for is to inline what
+the function does:
+
+```
+/usr/bin/env -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR=~/.claude-accounts/<slug> claude -p
+```
+
+which works, and which is also where the real hazard lives: drop the `-u` and the run silently bills
+the API instead of the subscription, because `ANTHROPIC_API_KEY` outranks the directory's login. That
+detail belongs in one place that everyone calls, not in each consumer's config.
+
+### 15.1 The files
+
+`setup` writes `~/.claude-multi/bin/claude-<slug>`, mode 755, one per account, regenerated like every
+other artefact (`install_file`, so an unchanged file is not rewritten and `--dry-run` only reports).
+Each is a `#!/bin/sh` script that resolves `claude` on `PATH` at run time, refuses with the account
+directory named if it is missing, unsets `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+`CLAUDE_CODE_OAUTH_TOKEN`, exports `CLAUDE_CONFIG_DIR`, and `exec`s `claude` with the shared
+`--mcp-config` / `--settings` flags — the same contract §6 gives the function, and for the same
+reasons.
+
+`$HOME` is resolved at run time rather than baked in at generation time, which is what
+`CLAUDE_MULTI_ACCOUNTS_ROOT` already does in `aliases.sh`.
+
+Removing an account removes its launcher. A stale one would pin a directory that no longer exists and
+fail later with a "missing" message, long after anyone connects it to the removal.
+
+### 15.2 One implementation, not two
+
+`_claude_multi_run` becomes a wrapper: it resolves `$CLAUDE_MULTI_BIN_DIR/claude-<slug>` and runs it.
+Everything the account needs lives in the file. A second copy of that logic in the function would be
+two things to keep in step, and the interesting parts — the credential unsets and the flag order —
+are exactly the parts where drift would be silent.
+
+`aliases.sh` appends the bin directory to `PATH`, guarded against a repeat entry, so the bare name
+works for a process started from a shell that sourced it. Appended rather than prepended: these names
+belong to claude-multi alone, so there is nothing to shadow and no reason to outrank the rest of
+`PATH`. A shell function still wins over `PATH` in both zsh and bash, so an interactive
+`claude-<slug>` keeps hitting the function — which now runs the same file anyway.
+
+`cuse` stays a shell function and cannot become anything else: it exports `CLAUDE_CONFIG_DIR` into the
+*calling* shell, and no child process can do that.
+
+### 15.3 Tests
+
+| Case | Setup | Asserts |
+|---|---|---|
+| T27 | two accounts, then `remove` of one | `bin/` is a real directory; a launcher per account, mode 755, first line `#!/bin/sh`; run under `env -i` with only `HOME` and `PATH` — exit 0, the account's `CLAUDE_CONFIG_DIR`, the argument passed through, `mcp.json` among the flags; with `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` set, all three reach `claude` as `<unset>`; `aliases.sh` names `CLAUDE_MULTI_BIN_DIR` and delegates, and no longer `exec`s `claude` itself; after `remove`, that launcher is gone and the other survives |
+
+`env -i` is the point of the case: an empty environment proves the launcher needs neither `aliases.sh`
+nor an interactive shell, which is exactly what cron, CI and a config-driven tool hand it.
+
+Version: 1.4.0 everywhere.

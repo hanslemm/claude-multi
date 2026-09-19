@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26)
+# tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
 # for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
@@ -36,7 +36,7 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27"
 
 TOTAL_OK=0
 TOTAL_FAIL=0
@@ -1625,8 +1625,55 @@ case_T26() { # shared plugins link (§14): ~/.claude/plugins absent, then presen
   assert_seed_untouched
 }
 
+case_T27() { # executable launchers (§15): a real file per account, the function delegates, remove prunes
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  local bin="$H/.claude-multi/bin"
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+
+  assert_dir "bin/ is a real directory" "$bin"
+  assert_exists "alice launcher exists" "$bin/claude-alice"
+  assert_exists "bob launcher exists" "$bin/claude-bob"
+  assert_mode "alice launcher is executable" "$bin/claude-alice" "-rwxr-xr-x"
+  assert_first_line "alice launcher is a sh script" "$bin/claude-alice" "#!/bin/sh"
+
+  # The point of the file: anything that spawns a process can use it. `env -i` is deliberate --
+  # an empty environment proves the launcher needs neither aliases.sh nor an interactive shell,
+  # which is exactly what cron, CI and a tool reading a command out of config give it.
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" "$bin/claude-alice" hello > "$T/launch.out" 2>&1
+  local lrc=$?
+  assert_eq "launcher exit 0" "0" "$lrc"
+  assert_file_has "launcher pinned alice's config dir" "$T/launch.out" \
+    "CLAUDE_CONFIG_DIR=$H/.claude-accounts/alice"
+  assert_file_has "launcher passed the argument through" "$T/launch.out" "hello"
+  assert_file_has "launcher handed on the shared mcp config" "$T/launch.out" "mcp.json"
+
+  # ANTHROPIC_API_KEY outranks the subscription login; the launcher must remove it.
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" \
+    ANTHROPIC_API_KEY=sk-should-not-survive ANTHROPIC_AUTH_TOKEN=t CLAUDE_CODE_OAUTH_TOKEN=o \
+    "$bin/claude-alice" > "$T/launch-key.out" 2>&1
+  assert_file_has "launcher unset ANTHROPIC_API_KEY" "$T/launch-key.out" "KEY=<unset>"
+  assert_file_has "launcher unset ANTHROPIC_AUTH_TOKEN" "$T/launch-key.out" "AUTH_TOKEN=<unset>"
+  assert_file_has "launcher unset CLAUDE_CODE_OAUTH_TOKEN" "$T/launch-key.out" "OAUTH=<unset>"
+
+  # One implementation: the shell function is a wrapper, not a copy.
+  assert_file_has "aliases.sh knows the bin dir" "$H/.claude-multi/aliases.sh" "CLAUDE_MULTI_BIN_DIR"
+  assert_file_has "_claude_multi_run delegates to the launcher" "$H/.claude-multi/aliases.sh" \
+    '"$CLAUDE_MULTI_BIN_DIR/claude-$slug"'
+  assert_file_lacks "the run helper no longer execs claude itself" "$H/.claude-multi/aliases.sh" \
+    'exec "$bin" --mcp-config'
+
+  # A missing account must not leave a launcher that would pin a directory that is gone.
+  run_script -- remove bob@example.com
+  assert_rc "remove bob" 0
+  assert_absent "bob's launcher was pruned" "$bin/claude-bob"
+  assert_exists "alice's launcher survived" "$bin/claude-alice"
+}
+
 case_title() {
   case "$1" in
+    T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -1685,8 +1732,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-6]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T26)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-7]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T27)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES
