@@ -135,6 +135,10 @@ Two things decide whether a session prompts you:
   `relink` and `sync` append whichever is missing to `permissions.allow` in the shared file and change
   no other key or entry there. A copy you edited inside an account is still not overwritten, but it gains these
   two rules too. This needs `jq` or `python3`; without them a warning prints the two rules to add by hand.
+  Checked on Claude Code 2.1.288: an account session writes, edits and appends to memory without a
+  prompt, in auto mode and in default mode. Plain `claude` on the default account, whose memory path is
+  now a link out of `~/.claude`, was not prompted in auto mode; in default mode it has not been tested
+  and may ask.
   What it gives up: a memory write from an account session used to stop at a prompt, and now it does
   not, in any repo, for any repo's memory. Memory is read back into later sessions, so if you would
   rather review those writes, move the two rules from `permissions.allow` to `permissions.ask` in

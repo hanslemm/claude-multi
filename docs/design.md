@@ -754,23 +754,33 @@ doing this first deletes the memory, which the README's Uninstall section says i
 
 ### 16.6 Checks on a real Claude Code
 
-The Claude Code docs give no worked example of this layout, so the three statements below are
+The Claude Code docs give no worked example of this layout, so the three statements below were
 inferences from §16's quotes, and the harness cannot test them: it has no Claude Code. Moving a real
 memory folder or editing a real settings file is also refused to an agent session in auto mode
-("Self-Modification"), so the migration is run by the owner, in a terminal, and each check is recorded
+("Self-Modification"), so the migration was run by the owner, in a terminal, and each check is recorded
 here.
+
+Run 2026-10-03 on Claude Code 2.1.288, on a machine with four accounts. The migration moved 9 folders
+out of `~/.claude` and adopted 6 from one account (§16.7) with no conflict; every link then pointed
+straight at the store, the adopted folders held the files they held before, and a second run printed
+`No changes`. A repo that gained memory afterwards was moved by `--relink`, and the checks were run in
+that repo, so every write below went through a link into the store. "No prompt" is what the owner saw;
+the time is the wait between the tool call and its result in the session transcript.
 
 | # | Check | Result |
 |---|---|---|
-| 1 | An account session writes and edits a memory file through its own path with no prompt, in auto mode and in default mode, with the two rules present | not yet run |
-| 2 | Plain `claude` on the default account still writes memory without a prompt now that its memory path is a link out of `~/.claude` (the built-in exemption for the memory folder is undocumented) | not yet run |
-| 3 | A shell append (`>>`) to a memory file from an account session does not prompt | not yet run |
+| 1 | An account session writes and edits a memory file through its own path with no prompt, in auto mode and in default mode, with the two rules present | **Passed.** Auto mode: `Write` and `Edit`, no prompt, 0.2 s each. Default mode: the same, no prompt, 0.1 s each. Default mode is where an edit that no rule covers asks, so the two rules matched on both paths |
+| 2 | Plain `claude` on the default account still writes memory without a prompt now that its memory path is a link out of `~/.claude` (the built-in exemption for the memory folder is undocumented) | **Passed in auto mode; not tested in default mode.** `Write` through `~/.claude/projects/<p>/memory`, a link to the store: no prompt, 2.3 s. The same write into the real folder, before it was moved, took 0.2 s. That fits the write no longer taking a built-in fast path and being decided by the auto-mode classifier instead, which is an inference from the timing: the transcript does not record it. Default mode has no classifier, so what plain `claude` does there is unknown |
+| 3 | A shell append (`>>`) to a memory file from an account session does not prompt | **Passed.** Auto mode: `>>` through the account's own path, no prompt, 1.0 s |
 
-If 1 fails, the fallback is the `autoMemoryDirectory` setting
+Before the move, the same kind of write from an account session waited between 10 seconds and 4
+minutes (§16, first paragraph).
+
+The fallback for a failed check 1 was the `autoMemoryDirectory` setting
 (<https://code.claude.com/docs/en/memory#storage-location>). It replaces the per-project folder, so set
-in the shared file it would give every project one folder; it only works per project. It is not built
-and will not be unless the link route fails. If 2 fails, the README says so plainly: the accounts are
-the tool's purpose.
+in the shared file it would give every project one folder; it only works per project. Check 1 passed,
+so it is not built. The open item is check 2 in default mode, and the README says so: the accounts are
+the tool's purpose, and they are what was verified.
 
 ### 16.7 Adoption of memory first created inside an account
 
