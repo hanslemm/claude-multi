@@ -197,9 +197,9 @@ EOF
   "active": 1,
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.", "active": true},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH", "active": false},
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH", "active": false},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.", "active": false},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal", "active": false}
+    {"number": 4, "email": "hans@mail.test", "organization": "personal", "active": false}
   ]
 }
 EOF
@@ -209,9 +209,9 @@ EOF
   "active": 1,
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.", "active": true},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH", "active": false},
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH", "active": false},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.", "active": false},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal", "active": false},
+    {"number": 4, "email": "hans@mail.test", "organization": "personal", "active": false},
     {"number": 5, "email": "alice@other.test", "organization": "Other Org", "active": false}
   ]
 }
@@ -223,11 +223,11 @@ EOF
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.",
      "accessToken": "sk-ant-oat01-FAKETOKEN-alice", "refreshToken": "sk-ant-ort01-FAKETOKEN-alice"},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH",
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH",
      "accessToken": "sk-ant-oat01-FAKETOKEN-hans1", "refreshToken": "sk-ant-ort01-FAKETOKEN-hans1"},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.",
      "accessToken": "sk-ant-oat01-FAKETOKEN-info", "refreshToken": "sk-ant-ort01-FAKETOKEN-info"},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal",
+    {"number": 4, "email": "hans@mail.test", "organization": "personal",
      "accessToken": "sk-ant-oat01-FAKETOKEN-hans2", "refreshToken": "sk-ant-ort01-FAKETOKEN-hans2"}
   ]
 }
@@ -237,9 +237,9 @@ EOF
   cat > "$FIX/cswap-list.ansi.tpl" <<'EOF'
 <ESC>[1;36mClaude Code accounts<ESC>[0m
 <ESC>[32m  1: alice@example.com<ESC>[0m  <ESC>[2m[Alice's Coffee Co.]<ESC>[0m  <ESC>[33m(active)<ESC>[0m
-  2: hans@betterdoc.test  <ESC>[2m[BetterDoc GmbH]<ESC>[0m
+  2: hans@acme.test  <ESC>[2m[Acme GmbH]<ESC>[0m
   3: info@corp.test  <ESC>[2m[Corp Inc.]<ESC>[0m
-  4: hans@proton.test  <ESC>[2m[personal]<ESC>[0m
+  4: hans@mail.test  <ESC>[2m[personal]<ESC>[0m
 <ESC>[2mUse 'cswap use <n>' to switch the default account.<ESC>[0m
 EOF
   awk -v esc='\033' '{ gsub(/<ESC>/, esc); print }' "$FIX/cswap-list.ansi.tpl" > "$FIX/cswap-list.ansi"
@@ -285,12 +285,12 @@ cwho > "$P/cwho-unpinned.out" 2> "$P/cwho-unpinned.err"; echo $? > "$P/cwho-unpi
 cuse > "$P/cuse-noarg.out" 2> "$P/cuse-noarg.err"; echo $? > "$P/cuse-noarg.rc"
 cuse nonexistent > "$P/cuse-missing.out" 2> "$P/cuse-missing.err"; echo $? > "$P/cuse-missing.rc"
 cfg cuse-missing
-cuse hans-proton > "$P/cuse-slug.out" 2> "$P/cuse-slug.err"; echo $? > "$P/cuse-slug.rc"
+cuse hans-mail > "$P/cuse-slug.out" 2> "$P/cuse-slug.err"; echo $? > "$P/cuse-slug.rc"
 cfg cuse-slug
 cwho > "$P/cwho-pinned.out" 2> "$P/cwho-pinned.err"; echo $? > "$P/cwho-pinned.rc"
 cuse 1 > "$P/cuse-slot.out" 2> "$P/cuse-slot.err"; echo $? > "$P/cuse-slot.rc"
 cfg cuse-slot
-claude-hans-betterdoc --print hello > "$P/launcher-fn.out" 2> "$P/launcher-fn.err"; echo $? > "$P/launcher-fn.rc"
+claude-hans-acme --print hello > "$P/launcher-fn.out" 2> "$P/launcher-fn.err"; echo $? > "$P/launcher-fn.rc"
 cfg launcher-fn; key launcher-fn
 eval 'claude3 mcp list' > "$P/launcher-alias.out" 2> "$P/launcher-alias.err"; echo $? > "$P/launcher-alias.rc"
 ( PATH=/usr/bin:/bin; claude-alice ) > "$P/launcher-nobin.out" 2>&1; echo $? > "$P/launcher-nobin.rc"
@@ -327,7 +327,7 @@ claude-multi status > "$P/status.out" 2> "$P/status.err"; echo $? > "$P/status.r
 "$HOME/.claude-multi/claude-multi-setup.sh" status > "$P/status-direct.out" 2> "$P/status-direct.err"
 claude-multi use default > "$P/default.out" 2> "$P/default.err"; echo $? > "$P/default.rc"
 cfg default; acct default; exported default
-cuse hans-proton > "$P/cuse.out" 2>&1; echo $? > "$P/cuse.rc"
+cuse hans-mail > "$P/cuse.out" 2>&1; echo $? > "$P/cuse.rc"
 acct cuse; exported cuse
 cuse default > /dev/null 2>&1
 acct cuse-default; cfg cuse-default
@@ -454,22 +454,22 @@ assert_aliases_parse() {
 assert_four_accounts() { # the T1–T4 result
   assert_rc "setup" 0
   assert_account_dir alice
-  assert_account_dir hans-betterdoc
+  assert_account_dir hans-acme
   assert_account_dir info
-  assert_account_dir hans-proton
+  assert_account_dir hans-mail
   assert_eq "exactly 4 account dirs" "4" "$(find "$H/.claude-accounts" -mindepth 1 -maxdepth 1 2>/dev/null | grep -c .)"
   assert_first_line "accounts.tsv v2 header" "$H/.claude-multi/accounts.tsv" \
     '# claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.'
   assert_registry_row 1 alice@example.com alice
-  assert_registry_row 2 hans@betterdoc.test hans-betterdoc
+  assert_registry_row 2 hans@acme.test hans-acme
   assert_registry_row 3 info@corp.test info
-  assert_registry_row 4 hans@proton.test hans-proton
+  assert_registry_row 4 hans@mail.test hans-mail
   assert_eq "accounts.tsv has 4 rows" "4" "$(registry_rows)"
   assert_aliases_parse
   assert_seed_untouched
   assert_rc_untouched
   out_matches "summary: alice line" '^  1 +claude-alice +alice@example.com +'"$H"'/\.claude-accounts/alice$'
-  out_matches "summary: login hint for hans-proton" '^  claude-multi login hans-proton +\(hans@proton\.test\)'
+  out_matches "summary: login hint for hans-mail" '^  claude-multi login hans-mail +\(hans@mail\.test\)'
   out_has "summary: Shared config line" "Shared config: "
   out_has "summary: Aliases line" "Aliases: "
   out_has "summary: rc file line" "rc file: "
@@ -628,16 +628,16 @@ case_T10() { # a 5th account appears in cswap
   set_cswap json
   run_script -- setup
   assert_rc "first run" 0
-  i1=$(inode_of "$H/.claude-accounts/alice"); i2=$(inode_of "$H/.claude-accounts/hans-betterdoc")
-  i3=$(inode_of "$H/.claude-accounts/info");  i4=$(inode_of "$H/.claude-accounts/hans-proton")
+  i1=$(inode_of "$H/.claude-accounts/alice"); i2=$(inode_of "$H/.claude-accounts/hans-acme")
+  i3=$(inode_of "$H/.claude-accounts/info");  i4=$(inode_of "$H/.claude-accounts/hans-mail")
   rows=$(registry_rows)
   set_cswap json5
   run_script -- setup
   assert_rc "second run with 5 accounts" 0
   assert_eq "alice dir same inode" "$i1" "$(inode_of "$H/.claude-accounts/alice")"
-  assert_eq "hans-betterdoc dir same inode" "$i2" "$(inode_of "$H/.claude-accounts/hans-betterdoc")"
+  assert_eq "hans-acme dir same inode" "$i2" "$(inode_of "$H/.claude-accounts/hans-acme")"
   assert_eq "info dir same inode" "$i3" "$(inode_of "$H/.claude-accounts/info")"
-  assert_eq "hans-proton dir same inode" "$i4" "$(inode_of "$H/.claude-accounts/hans-proton")"
+  assert_eq "hans-mail dir same inode" "$i4" "$(inode_of "$H/.claude-accounts/hans-mail")"
   assert_account_dir alice-other
   assert_registry_row 5 alice@other.test alice-other
   assert_eq "registry gained exactly one row" "$((rows + 1))" "$(registry_rows)"
@@ -790,8 +790,8 @@ t14_assert_shell() { # label
   assert_file_line "[$L] cwho list header" "$P/cwho-unpinned.out" "Accounts (slot · launcher · email · login):"
   assert_eq "[$L] cwho unpinned: no * mark" "0" "$(count_matches "$P/cwho-unpinned.out" '^  \* ')"
   assert_file_matches "[$L] cwho lists alice as logged in" "$P/cwho-unpinned.out" '^  [ *] 1 +claude-alice +alice@example\.com +logged in$'
-  assert_file_matches "[$L] cwho lists hans-proton as NOT logged in" "$P/cwho-unpinned.out" '^  [ *] 4 +claude-hans-proton +hans@proton\.test +NOT logged in '
-  assert_file_has "[$L] NOT logged in wording" "$P/cwho-unpinned.out" "NOT logged in → run claude-multi login hans-proton"
+  assert_file_matches "[$L] cwho lists hans-mail as NOT logged in" "$P/cwho-unpinned.out" '^  [ *] 4 +claude-hans-mail +hans@mail\.test +NOT logged in '
+  assert_file_has "[$L] NOT logged in wording" "$P/cwho-unpinned.out" "NOT logged in → run claude-multi login hans-mail"
   # cuse: no argument, unknown
   assert_eq "[$L] cuse without argument exits 2" "2" "$(cat "$P/cuse-noarg.rc" 2>/dev/null)"
   assert_file_empty "[$L] cuse without argument: stdout empty" "$P/cuse-noarg.out"
@@ -802,13 +802,13 @@ t14_assert_shell() { # label
   assert_file_has "[$L] cuse nonexistent: list on stderr" "$P/cuse-missing.err" "Accounts (slot"
   assert_eq "[$L] cuse nonexistent leaves CLAUDE_CONFIG_DIR unset" "<unset>" "$(cat "$P/cuse-missing.cfg" 2>/dev/null)"
   # cuse by slug
-  assert_eq "[$L] cuse hans-proton exits 0" "0" "$(cat "$P/cuse-slug.rc" 2>/dev/null)"
-  assert_first_line "[$L] cuse hans-proton line" "$P/cuse-slug.out" "This terminal: hans-proton (hans@proton.test)  CLAUDE_CONFIG_DIR=$acc/hans-proton"
-  assert_file_line "[$L] cuse hans-proton: not-logged-in hint" "$P/cuse-slug.out" "  not logged in yet: run  claude-multi login hans-proton"
+  assert_eq "[$L] cuse hans-mail exits 0" "0" "$(cat "$P/cuse-slug.rc" 2>/dev/null)"
+  assert_first_line "[$L] cuse hans-mail line" "$P/cuse-slug.out" "This terminal: hans-mail (hans@mail.test)  CLAUDE_CONFIG_DIR=$acc/hans-mail"
+  assert_file_line "[$L] cuse hans-mail: not-logged-in hint" "$P/cuse-slug.out" "  not logged in yet: run  claude-multi login hans-mail"
   assert_file_has "[$L] cuse notes ANTHROPIC_API_KEY" "$P/cuse-slug.out" "ANTHROPIC_API_KEY"
-  assert_eq "[$L] cuse exported CLAUDE_CONFIG_DIR" "$acc/hans-proton" "$(cat "$P/cuse-slug.cfg" 2>/dev/null)"
-  assert_first_line "[$L] cwho pinned first line" "$P/cwho-pinned.out" "This terminal: hans-proton (hans@proton.test)  CLAUDE_CONFIG_DIR=$acc/hans-proton"
-  assert_file_matches "[$L] cwho pinned marks slot 4" "$P/cwho-pinned.out" '^  \* 4 +claude-hans-proton +hans@proton\.test'
+  assert_eq "[$L] cuse exported CLAUDE_CONFIG_DIR" "$acc/hans-mail" "$(cat "$P/cuse-slug.cfg" 2>/dev/null)"
+  assert_first_line "[$L] cwho pinned first line" "$P/cwho-pinned.out" "This terminal: hans-mail (hans@mail.test)  CLAUDE_CONFIG_DIR=$acc/hans-mail"
+  assert_file_matches "[$L] cwho pinned marks slot 4" "$P/cwho-pinned.out" '^  \* 4 +claude-hans-mail +hans@mail\.test'
   assert_eq "[$L] cwho pinned: exactly one * mark" "1" "$(count_matches "$P/cwho-pinned.out" '^  \* ')"
   # cuse by slot (alice is logged in)
   assert_eq "[$L] cuse 1 exits 0" "0" "$(cat "$P/cuse-slot.rc" 2>/dev/null)"
@@ -816,9 +816,9 @@ t14_assert_shell() { # label
   assert_file_lacks "[$L] cuse 1: no not-logged-in hint for a logged-in account" "$P/cuse-slot.out" "not logged in"
   assert_eq "[$L] cuse 1 exported CLAUDE_CONFIG_DIR" "$acc/alice" "$(cat "$P/cuse-slot.cfg" 2>/dev/null)"
   # launcher by function
-  assert_eq "[$L] claude-hans-betterdoc exits 0" "0" "$(cat "$P/launcher-fn.rc" 2>/dev/null)"
+  assert_eq "[$L] claude-hans-acme exits 0" "0" "$(cat "$P/launcher-fn.rc" 2>/dev/null)"
   assert_first_line "[$L] launcher: config dir, KEY=<unset>, flag order, args" "$P/launcher-fn.out" \
-    "stub claude CLAUDE_CONFIG_DIR=$acc/hans-betterdoc KEY=<unset> ARGS=--mcp-config $shared/mcp.json --settings $shared/settings.json --print hello"
+    "stub claude CLAUDE_CONFIG_DIR=$acc/hans-acme KEY=<unset> ARGS=--mcp-config $shared/mcp.json --settings $shared/settings.json --print hello"
   assert_eq "[$L] shell CLAUDE_CONFIG_DIR unchanged by the launcher" "$acc/alice" "$(cat "$P/launcher-fn.cfg" 2>/dev/null)"
   assert_eq "[$L] shell ANTHROPIC_API_KEY unchanged by the launcher" "sk-ant-LEAK" "$(cat "$P/launcher-fn.key" 2>/dev/null)"
   assert_file_line "[$L] launcher: AUTH_TOKEN and OAUTH_TOKEN unset too" "$P/launcher-fn.out" "stub env AUTH_TOKEN=<unset> OAUTH=<unset>"
@@ -831,10 +831,10 @@ t14_assert_shell() { # label
   assert_eq "[$L] launcher with a missing account dir exits 1" "1" "$(cat "$P/launcher-nodir.rc" 2>/dev/null)"
   assert_file_has "[$L] missing-dir error names the setup script" "$P/launcher-nodir.out" "claude-multi-setup.sh"
   # lookups
-  assert_first_line "[$L] _claude_multi_find by slot" "$P/find-slot.out" "4 hans-proton hans@proton.test"
+  assert_first_line "[$L] _claude_multi_find by slot" "$P/find-slot.out" "4 hans-mail hans@mail.test"
   assert_first_line "[$L] _claude_multi_find by slug" "$P/find-slug.out" "1 alice alice@example.com"
   assert_file_empty "[$L] _claude_multi_find unknown prints nothing" "$P/find-none.out"
-  assert_eq "[$L] _claude_multi_accounts prints 4 lines in slot order" "1 alice alice@example.com|2 hans-betterdoc hans@betterdoc.test|3 info info@corp.test|4 hans-proton hans@proton.test|" \
+  assert_eq "[$L] _claude_multi_accounts prints 4 lines in slot order" "1 alice alice@example.com|2 hans-acme hans@acme.test|3 info info@corp.test|4 hans-mail hans@mail.test|" \
     "$(tr '\n' '|' < "$P/accounts.out" 2>/dev/null)"
   # cuse default
   assert_eq "[$L] cuse default exits 0" "0" "$(cat "$P/cuse-default.rc" 2>/dev/null)"
@@ -897,12 +897,12 @@ case_T15() { # remove b@y.test
   set_cswap json
   run_script -- setup
   assert_rc "setup with cswap" 0
-  assert_registry_row 4 hans@proton.test hans-proton
-  run_script -- remove hans@proton.test
-  assert_rc "remove hans@proton.test" 0
-  assert_file_lacks "registry row for hans@proton.test gone" "$H/.claude-multi/accounts.tsv" "hans@proton.test"
-  out_has "remove notes cswap still lists it" "cswap still lists hans@proton.test"
-  assert_dir "dir hans-proton still exists" "$H/.claude-accounts/hans-proton"
+  assert_registry_row 4 hans@mail.test hans-mail
+  run_script -- remove hans@mail.test
+  assert_rc "remove hans@mail.test" 0
+  assert_file_lacks "registry row for hans@mail.test gone" "$H/.claude-multi/accounts.tsv" "hans@mail.test"
+  out_has "remove notes cswap still lists it" "cswap still lists hans@mail.test"
+  assert_dir "dir hans-mail still exists" "$H/.claude-accounts/hans-mail"
 }
 
 case_T16() { # status before setup, after setup, after a fake login, pinned, unmanaged
@@ -938,9 +938,9 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   out_line "rc not sourced" "rc: not sourced (run --rc)"
   out_line "terminal default" "terminal: default"
   out_line "account 1" "account: 1 alice alice@example.com not-logged-in"
-  out_line "account 2" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in"
+  out_line "account 2" "account: 2 hans-acme hans@acme.test not-logged-in"
   out_line "account 3" "account: 3 info info@corp.test not-logged-in"
-  out_line "account 4" "account: 4 hans-proton hans@proton.test not-logged-in"
+  out_line "account 4" "account: 4 hans-mail hans@mail.test not-logged-in"
   out_has "next: first not-logged-in account" "next: run claude-multi login alice"
   next1=$(sed -n 's/^next: //p' "$T/out")
   printf '{"oauthAccount":{}}\n' 2>/dev/null > "$H/.claude-accounts/alice/.claude.json"
@@ -950,7 +950,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   out_line "account 1 now logged-in" "account: 1 alice alice@example.com logged-in"
   next2=$(sed -n 's/^next: //p' "$T/out")
   assert_ne "next: changed after the login" "$next1" "$next2"
-  out_has "next: now names hans-betterdoc" "claude-multi login hans-betterdoc"
+  out_has "next: now names hans-acme" "claude-multi login hans-acme"
   run_script "CLAUDE_CONFIG_DIR=$H/.claude-accounts/info" -- status
   out_line "terminal pinned" "terminal: info (info@corp.test)"
   run_script "CLAUDE_CONFIG_DIR=/tmp/elsewhere" -- status
@@ -964,7 +964,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
 case_T17() { # v1 registry + v1 aliases.zsh
   set_cswap json
   mkdir -p "$H/.claude-multi"
-  printf '# claude-multi: email<TAB>slug. A slug never changes once assigned.\nalice@example.com\tally\nhans@betterdoc.test\thansb\n' > "$H/.claude-multi/accounts.tsv"
+  printf '# claude-multi: email<TAB>slug. A slug never changes once assigned.\nalice@example.com\tally\nhans@acme.test\thansb\n' > "$H/.claude-multi/accounts.tsv"
   printf '# ~/.claude-multi/aliases.zsh — GENERATED by ~/.claude-multi/claude-multi-setup.sh. Do not edit.\nalias claude1=nothing\n' > "$H/.claude-multi/aliases.zsh"
   printf '# seeded zshrc\n\n%s\n' "$V1_RC_LINE" > "$H/.zshrc"
   cp "$H/.zshrc" "$T/zshrc.v1"
@@ -973,13 +973,13 @@ case_T17() { # v1 registry + v1 aliases.zsh
   assert_account_dir ally
   assert_account_dir hansb
   assert_account_dir info
-  assert_account_dir hans          # `hans` is free: the v1 registry maps hans@betterdoc.test to `hansb`
+  assert_account_dir hans          # `hans` is free: the v1 registry maps hans@acme.test to `hansb`
   assert_absent "no dir 'alice' (v1 slug kept)" "$H/.claude-accounts/alice"
-  assert_absent "no dir 'hans-betterdoc' (v1 slug kept)" "$H/.claude-accounts/hans-betterdoc"
+  assert_absent "no dir 'hans-acme' (v1 slug kept)" "$H/.claude-accounts/hans-acme"
   assert_registry_row 1 alice@example.com ally
-  assert_registry_row 2 hans@betterdoc.test hansb
+  assert_registry_row 2 hans@acme.test hansb
   assert_registry_row 3 info@corp.test info
-  assert_registry_row 4 hans@proton.test hans
+  assert_registry_row 4 hans@mail.test hans
   assert_first_line "accounts.tsv rewritten as v2" "$H/.claude-multi/accounts.tsv" \
     '# claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.'
   assert_exists "aliases.sh written" "$H/.claude-multi/aliases.sh"
@@ -1088,8 +1088,8 @@ t19_assert_shell() { # label
   assert_eq "[$L] use default: CLAUDE_MULTI_ACCOUNT unset" "<unset>" "$(cat "$P/default.acct" 2>/dev/null)"
   assert_eq "[$L] use default: neither variable reaches a child sh" "<unset>|<unset>" "$(cat "$P/default.exported" 2>/dev/null)"
   # cuse itself carries CLAUDE_MULTI_ACCOUNT (§12.1)
-  assert_eq "[$L] cuse hans-proton exits 0" "0" "$(cat "$P/cuse.rc" 2>/dev/null)"
-  assert_eq "[$L] cuse hans-proton exports CLAUDE_MULTI_ACCOUNT" "$acc/hans-proton|hans-proton" "$(cat "$P/cuse.exported" 2>/dev/null)"
+  assert_eq "[$L] cuse hans-mail exits 0" "0" "$(cat "$P/cuse.rc" 2>/dev/null)"
+  assert_eq "[$L] cuse hans-mail exports CLAUDE_MULTI_ACCOUNT" "$acc/hans-mail|hans-mail" "$(cat "$P/cuse.exported" 2>/dev/null)"
   assert_eq "[$L] cuse default unsets CLAUDE_MULTI_ACCOUNT" "<unset>" "$(cat "$P/cuse-default.acct" 2>/dev/null)"
   assert_eq "[$L] cuse default unsets CLAUDE_CONFIG_DIR" "<unset>" "$(cat "$P/cuse-default.cfg" 2>/dev/null)"
   assert_eq "[$L] claude-multi use nonexistent exits 1" "1" "$(cat "$P/use-missing.rc" 2>/dev/null)"
@@ -1169,11 +1169,11 @@ case_T20() { # `login` against the stub claude
   # login <slot> and login <email> resolve too
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login 4
   assert_rc "login 4" 0
-  assert_eq "login 4 resolved to hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 2)"
-  out_has "login 4 reports 'logged in as hans@proton.test'" "logged in as hans@proton.test"
-  run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login hans@proton.test
-  assert_rc "login hans@proton.test" 0
-  assert_eq "login <email> resolved to hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 3)"
+  assert_eq "login 4 resolved to hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 2)"
+  out_has "login 4 reports 'logged in as hans@mail.test'" "logged in as hans@mail.test"
+  run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login hans@mail.test
+  assert_rc "login hans@mail.test" 0
+  assert_eq "login <email> resolved to hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 3)"
   assert_eq "three logins so far" "3" "$(login_lines)"
   # unknown account
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login nonexistent
@@ -1205,21 +1205,21 @@ case_T20() { # `login` against the stub claude
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login --all
   assert_rc "login --all" 0
   assert_eq "login --all: exactly two logins" "2" "$(login_lines)"
-  assert_eq "login --all: first hans-betterdoc (slot 2)" "$(expected_login_line hans-betterdoc hans@betterdoc.test)" "$(login_line_n 1)"
-  assert_eq "login --all: then hans-proton (slot 4)" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 2)"
+  assert_eq "login --all: first hans-acme (slot 2)" "$(expected_login_line hans-acme hans@acme.test)" "$(login_line_n 1)"
+  assert_eq "login --all: then hans-mail (slot 4)" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 2)"
   assert_file_lacks "login --all skipped alice (logged in)" "$STUB_LOG" "alice@example.com"
   assert_file_lacks "login --all skipped info (logged in)" "$STUB_LOG" "info@corp.test"
-  out_has "login --all reports hans@betterdoc.test" "logged in as hans@betterdoc.test"
-  out_has "login --all reports hans@proton.test" "logged in as hans@proton.test"
+  out_has "login --all reports hans@acme.test" "logged in as hans@acme.test"
+  out_has "login --all reports hans@mail.test" "logged in as hans@mail.test"
   # --all takes the VERIFIED state: alice keeps her oauthAccount (heuristic: logged in) but loses the stub marker
-  # (verified: not) → attempted; hans-betterdoc has the marker only (heuristic: not, verified: logged in) → skipped
+  # (verified: not) → attempted; hans-acme has the marker only (heuristic: not, verified: logged in) → skipped
   rm -f "$STUB_LOG" "$acc/alice/.stub-logged-in"
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login --all
   assert_rc "login --all (stale oauthAccount)" 0
   assert_eq "login --all: exactly one login (alice)" "1" "$(login_lines)"
   assert_eq "login --all: alice attempted despite her oauthAccount" "$(expected_login_line alice alice@example.com)" "$(login_line_n 1)"
-  out_line "login --all: hans-betterdoc skipped on its verified state" "account: 2 hans-betterdoc hans@betterdoc.test logged-in (verified)"
-  assert_file_lacks "login --all: hans-betterdoc not attempted" "$STUB_LOG" "auth login --email hans@betterdoc.test"
+  out_line "login --all: hans-acme skipped on its verified state" "account: 2 hans-acme hans@acme.test logged-in (verified)"
+  assert_file_lacks "login --all: hans-acme not attempted" "$STUB_LOG" "auth login --email hans@acme.test"
   # a failing login
   rm -f "$STUB_LOG" "$acc"/*/.stub-logged-in
   : > "$H/stub-login-fails"
@@ -1234,7 +1234,7 @@ case_T20() { # `login` against the stub claude
   assert_eq "login --all stopped at the first failure (one attempt)" "1" "$(login_lines)"
   assert_eq "login --all: the attempt was alice (slot 1; her stale oauthAccount does not skip her)" "$(expected_login_line alice alice@example.com)" "$(login_line_n 1)"
   outerr_has "login --all: 'login did not complete for alice@example.com'" "login did not complete for alice@example.com"
-  outerr_lacks "login --all: hans-betterdoc never reached" "Logging in to hans@betterdoc.test"
+  outerr_lacks "login --all: hans-acme never reached" "Logging in to hans@acme.test"
   rm -f "$H/stub-login-fails"
   # the CLI reports a different email than the one asked for: logged in, with the §12.2 warning
   rm -f "$STUB_LOG"
@@ -1260,13 +1260,13 @@ case_T21() { # status --verify
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
   assert_eq "status --verify key order" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
-  out_line "verified: hans-betterdoc not logged in" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in (verified)"
+  out_line "verified: hans-acme not logged in" "account: 2 hans-acme hans@acme.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
-  out_line "verified: hans-proton not logged in" "account: 4 hans-proton hans@proton.test not-logged-in (verified)"
+  out_line "verified: hans-mail not logged in" "account: 4 hans-mail hans@mail.test not-logged-in (verified)"
   out_has "next: names the first verified-missing account (alice)" "claude-multi login alice"
   assert_eq "auth status ran once per account" "4" "$(status_lines)"
   assert_file_has "auth status ran under the alice dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/alice"
-  assert_file_has "auth status ran under the hans-proton dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/hans-proton"
+  assert_file_has "auth status ran under the hans-mail dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/hans-mail"
   assert_eq "status --verify never calls auth login" "0" "$(login_lines)"
   assert_eq "status --verify wrote nothing (but the stub's own log)" "" "$(newer_than "$T/stamp" | grep -v -x -e "$H" -e "$STUB_LOG")"
   assert_file_empty "status --verify: nothing on stderr" "$T/err"
@@ -1289,18 +1289,18 @@ case_T21() { # status --verify
   restore_claude
   # a registered account whose dir is gone: `claude auth status` would create it (mode 755) just to say "no login"
   rm -f "$STUB_LOG"
-  rm -rf "$acc/hans-proton"
+  rm -rf "$acc/hans-mail"
   run_script -- status --verify
   assert_rc "status --verify with a missing account dir" 0
-  out_line "missing dir: hans-proton not-logged-in (verified)" "account: 4 hans-proton hans@proton.test not-logged-in (verified)"
-  assert_absent "missing dir: status --verify did not create it" "$acc/hans-proton"
+  out_line "missing dir: hans-mail not-logged-in (verified)" "account: 4 hans-mail hans@mail.test not-logged-in (verified)"
+  assert_absent "missing dir: status --verify did not create it" "$acc/hans-mail"
   assert_eq "missing dir: auth status ran for the three existing dirs only" "3" "$(status_lines)"
-  assert_file_lacks "missing dir: auth status never ran under hans-proton" "$STUB_LOG" "CLAUDE_CONFIG_DIR=$acc/hans-proton"
+  assert_file_lacks "missing dir: auth status never ran under hans-mail" "$STUB_LOG" "CLAUDE_CONFIG_DIR=$acc/hans-mail"
   # the next: hint reads the STATE field: an account whose slug/email is 'not-logged-in' is not "the first missing one"
   run_script -- add not-logged-in@x.test
   assert_rc "add not-logged-in@x.test" 0
   assert_dir "add: dir not-logged-in exists" "$acc/not-logged-in"
-  for slug in alice hans-betterdoc info hans-proton not-logged-in; do
+  for slug in alice hans-acme info hans-mail not-logged-in; do
     mkdir -p "$acc/$slug" && printf '{"oauthAccount":{"emailAddress":"x"}}\n' > "$acc/$slug/.claude.json"
   done
   run_script -- status
@@ -1342,12 +1342,12 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   outerr_lacks "all-n: the summary does not also say NOT touched" "rc file: NOT touched"
   outerr_has "all-n: the rc offer names ~/.zshrc" "Append the source line to $H/.zshrc? [y/N]"
   outerr_has "all-n: the login offer for alice" "Log in to alice@example.com now? [Y/n]"
-  outerr_has "all-n: the login offer for hans-proton (every account asked)" "Log in to hans@proton.test now? [Y/n]"
+  outerr_has "all-n: the login offer for hans-mail (every account asked)" "Log in to hans@mail.test now? [Y/n]"
   assert_same_file "all-n: ~/.zshrc untouched" "$T/zshrc.seed" "$H/.zshrc"
   assert_absent "all-n: no rc-file" "$H/.claude-multi/rc-file"
   assert_absent "all-n: no login ran" "$STUB_LOG"
   assert_absent "all-n: no ~/.bashrc" "$H/.bashrc"
-  # y (rc), n alice, y hans-betterdoc, n info, EOF → hans-proton never asked
+  # y (rc), n alice, y hans-acme, n info, EOF → hans-mail never asked
   write_answers y n y n
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, y n y n" 0
@@ -1356,24 +1356,24 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   assert_eq "y: ~/.zshrc is seed + blank + line" "3" "$(grep -c '' "$H/.zshrc")"
   assert_file_has "y: rc-file remembers ~/.zshrc" "$H/.claude-multi/rc-file" "$H/.zshrc"
   assert_eq "logins: exactly one ran" "1" "$(login_lines)"
-  assert_eq "logins: it was hans-betterdoc" "$(expected_login_line hans-betterdoc hans@betterdoc.test)" "$(login_line_n 1)"
-  out_has "logins: reported 'logged in as hans@betterdoc.test'" "logged in as hans@betterdoc.test"
-  assert_absent "logins: hans-proton never reached (EOF)" "$acc/hans-proton/.stub-logged-in"
+  assert_eq "logins: it was hans-acme" "$(expected_login_line hans-acme hans@acme.test)" "$(login_line_n 1)"
+  out_has "logins: reported 'logged in as hans@acme.test'" "logged in as hans@acme.test"
+  assert_absent "logins: hans-mail never reached (EOF)" "$acc/hans-mail/.stub-logged-in"
   assert_absent "n: alice has no marker" "$acc/alice/.stub-logged-in"
   assert_absent "n: info has no marker" "$acc/info/.stub-logged-in"
   cp "$H/.zshrc" "$T/zshrc.1"
-  # rc line present → no rc offer; hans-betterdoc logged in (both heuristic + verified) → not offered
-  mark_logged_in hans-betterdoc hans@betterdoc.test
+  # rc line present → no rc offer; hans-acme logged in (both heuristic + verified) → not offered
+  mark_logged_in hans-acme hans@acme.test
   write_answers y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, rc present, one y" 0
   outerr_lacks "rc present: no rc offer" "Append the source line"
   assert_same_file "rc present: ~/.zshrc unchanged" "$T/zshrc.1" "$H/.zshrc"
-  outerr_lacks "logged-in account not offered" "Log in to hans@betterdoc.test now?"
+  outerr_lacks "logged-in account not offered" "Log in to hans@acme.test now?"
   assert_eq "second round: one more login" "2" "$(login_lines)"
   assert_eq "second round: alice (slot 1) first" "$(expected_login_line alice alice@example.com)" "$(login_line_n 2)"
-  outerr_lacks "second round: EOF stopped before hans-proton" "Log in to hans@proton.test now?"
-  # the offers follow `add` too: info n, hans-proton y, the new account → EOF
+  outerr_lacks "second round: EOF stopped before hans-mail" "Log in to hans@mail.test now?"
+  # the offers follow `add` too: info n, hans-mail y, the new account → EOF
   mark_logged_in alice alice@example.com
   write_answers n y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- add e@x.test
@@ -1381,7 +1381,7 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   assert_dir "add: dir e exists" "$acc/e"
   outerr_has "add: info offered" "Log in to info@corp.test now? [Y/n]"
   assert_eq "add: one more login" "3" "$(login_lines)"
-  assert_eq "add: it was hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 3)"
+  assert_eq "add: it was hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 3)"
   assert_absent "add: info skipped (n)" "$acc/info/.stub-logged-in"
   assert_absent "add: e never reached (EOF)" "$acc/e/.stub-logged-in"
   assert_same_file "add: ~/.zshrc unchanged" "$T/zshrc.1" "$H/.zshrc"
@@ -1392,14 +1392,14 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   outerr_lacks "--relink: no login offer" "now? [Y/n]"
   assert_eq "--relink: no login ran" "3" "$(login_lines)"
   # a login that fails inside the offers: the next account is still offered (§12.4 is per account), setup exits 0
-  # (the offers read the .claude.json heuristic, so hans-proton — stub marker only — is offered again)
+  # (the offers read the .claude.json heuristic, so hans-mail — stub marker only — is offered again)
   : > "$H/stub-login-fails"
   write_answers y y y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, y y y with a failing stub" 0
   assert_eq "failing offers: all three accepted logins were attempted" "6" "$(login_lines)"
   assert_eq "failing offers: info first" "$(expected_login_line info info@corp.test)" "$(login_line_n 4)"
-  assert_eq "failing offers: then hans-proton (offered after the failure)" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 5)"
+  assert_eq "failing offers: then hans-mail (offered after the failure)" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 5)"
   assert_eq "failing offers: then e" "$(expected_login_line e e@x.test)" "$(login_line_n 6)"
   outerr_has "failing offers: 'login did not complete for info@corp.test'" "login did not complete for info@corp.test"
   outerr_has "failing offers: e still offered" "Log in to e@x.test now? [Y/n]"
@@ -1485,7 +1485,7 @@ case_T23() { # update through a stub curl serving CLAUDE_MULTI_UPDATE_URL=file:/
 }
 
 case_T24() { # settings sync: each account's settings.json mirrors the shared file when that is safe
-  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/hans-betterdoc/settings.json"
+  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/hans-acme/settings.json"
   set_cswap json
   run_script -- setup
   assert_rc "setup" 0
@@ -1511,22 +1511,22 @@ case_T24() { # settings sync: each account's settings.json mirrors the shared fi
   run_script -- sync
   assert_rc "sync after a shared edit" 0
   assert_file_has "alice got the new key" "$a" '"model": "opus"'
-  assert_file_has "hans-betterdoc got the new key" "$b" '"model": "opus"'
+  assert_file_has "hans-acme got the new key" "$b" '"model": "opus"'
   run_script -- status
   out_line "status: all in sync after propagation" "settings: 4 in sync, 0 pending, 0 modified"
   # a copy edited inside the account is kept and reported; --force <slug> overwrites just that one
   printf '{\n  "permissions": {\n    "allow": ["Bash(x:*)"]\n  }\n}\n' > "$b"
   run_script -- sync
   assert_rc "sync with a modified copy" 0
-  out_has "hans-betterdoc kept" "settings: hans-betterdoc modified since the last sync — kept"
+  out_has "hans-acme kept" "settings: hans-acme modified since the last sync — kept"
   assert_file_has "kept copy untouched" "$b" 'Bash(x:*)'
   run_script -- status
   out_line "status counts the modified copy" "settings: 3 in sync, 0 pending, 1 modified"
   run_script -- setup
-  err_matches "setup warns about the kept copy" 'settings: hans-betterdoc modified since the last sync'
-  run_script -- sync --force hans-betterdoc
-  assert_rc "sync --force hans-betterdoc" 0
-  out_has "forced overwrite reported" "settings: hans-betterdoc overwritten (--force)"
+  err_matches "setup warns about the kept copy" 'settings: hans-acme modified since the last sync'
+  run_script -- sync --force hans-acme
+  assert_rc "sync --force hans-acme" 0
+  out_has "forced overwrite reported" "settings: hans-acme overwritten (--force)"
   assert_file_has "forced copy has the shared allow rule" "$b" 'Bash(ls:*)'
   assert_file_lacks "forced copy lost its own rule" "$b" 'Bash(x:*)'
   # --force with no slug overwrites every modified copy

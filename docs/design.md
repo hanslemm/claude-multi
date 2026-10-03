@@ -153,7 +153,7 @@ name in `aliases.sh` — so a row with any other slug is skipped with a warning.
 ```
 # claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.
 1	alice@example.com	alice
-2	hans@betterdoc.test	hans-betterdoc
+2	hans@acme.test	hans-acme
 ```
 
 A 2-column line (`email<TAB>slug`, the v1 format) is accepted on read as a row without a slot.
@@ -163,7 +163,7 @@ changes for that email.
 Slugs: lower-cased local part, runs of non-`[a-z0-9]` → `-`, trimmed (`acct` when nothing is left,
 e.g. `_@x.test`). Among NEW emails, a slug that
 is already taken (registry, or another new email's base) gets `-<first domain label>` appended
-(`hans@betterdoc.de` → `hans-betterdoc`); if still taken, `-<slot>`. Known emails keep their slug.
+(`hans@acme.test` → `hans-acme`); if still taken, `-<slot>`. Known emails keep their slug.
 
 ## 5. Account directories and links
 
@@ -281,7 +281,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 
 | # | Case | Asserts |
 |---|---|---|
-| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-betterdoc info hans-proton`, 6 symlinks each to absolute targets (5 into `~/.claude-shared`, `plugins` into `~/.claude/plugins`), shared seeded (settings = the seed plus the two memory allow rules of §16.3, key order kept; skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
+| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-acme info hans-mail`, 6 symlinks each to absolute targets (5 into `~/.claude-shared`, `plugins` into `~/.claude/plugins`), shared seeded (settings = the seed plus the two memory allow rules of §16.3, key order kept; skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
 | T2 | export-only cswap (`list --json` fails) | same result, source `cswap export`, no `claude-multi.*` left under `$TMPDIR` |
 | T3 | ANSI-only cswap | same result, source scraped |
 | T4 | jq + python3 shadowed with failing stubs | same 4 accounts; warning about mcp.json |
@@ -413,7 +413,7 @@ that ran `update` still has the old file loaded. `--dry-run` reports what would 
 | # | Case | Asserts |
 |---|---|---|
 | T19 | umbrella + `CLAUDE_MULTI_ACCOUNT` in zsh and bash | `claude-multi who` ≡ `cwho`; `claude-multi use info` exports both variables; `claude-multi use default` unsets both; `claude-multi status` output ≡ script `status`; `claude-multi help` exit 0 with the verb table; `claude-multi relink` reaches `setup --relink` (stub-observable via `No changes`/`Done`) |
-| T20 | `login` with a stub `claude` (records env + args; `auth status` prints `{"loggedIn": true}` once a marker file exists in `CLAUDE_CONFIG_DIR`, else `false`) | `login info` calls `auth login --email info@corp.test` under the info dir with all three credential vars unset; `login 4` and `login hans@proton.test` resolve; `login nonexistent` → 1; `login --no-input` → 2 with the message; `--all` visits only not-logged-in accounts in slot order; a stub that exits 1 → `login did not complete`, exit 1 |
+| T20 | `login` with a stub `claude` (records env + args; `auth status` prints `{"loggedIn": true}` once a marker file exists in `CLAUDE_CONFIG_DIR`, else `false`) | `login info` calls `auth login --email info@corp.test` under the info dir with all three credential vars unset; `login 4` and `login hans@mail.test` resolve; `login nonexistent` → 1; `login --no-input` → 2 with the message; `--all` visits only not-logged-in accounts in slot order; a stub that exits 1 → `login did not complete`, exit 1 |
 | T21 | `status --verify` | states `(verified)` from the stub; without `claude` in PATH the heuristic + warning |
 | T22 | interactive offers via `CLAUDE_MULTI_INPUT` | `y` appends the rc line once (and `rc-file` records it); `n` leaves it; login offers run the stub for accepted accounts only; `--no-input` asks nothing; `--dry-run` asks nothing and writes nothing |
 | T23 | `update` with `CLAUDE_MULTI_UPDATE_URL=file://…` served through a stub `curl` in `$HOME/bin` | a newer file installs (`<old> → <new>`, mode 755, then setup runs), a second `update` says `already up to date`, a non-script download is refused and the installed copy is byte-identical afterwards, `--dry-run` installs nothing |
@@ -567,7 +567,7 @@ out of its own configuration — could not run Claude Code as a chosen account a
 `command not found` for a name that works perfectly when typed, which reads as a typo rather than as
 a category error.
 
-Measured 2026-09-18, with a tool whose config wanted a model command: `claude-hans-lemm-betterdoc -p`
+Measured 2026-09-18, with a tool whose config wanted a model command: `claude-<slug> -p`
 was rejected as not found, while `type` reported it as *"a shell function from
 ~/.claude-accounts/<slug>/shell-snapshots/…"*. The workaround a user reaches for is to inline what
 the function does:
