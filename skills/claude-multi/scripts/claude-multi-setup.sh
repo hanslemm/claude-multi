@@ -221,78 +221,161 @@ link_shared_into() { # account-dir
 # `.claude` is a protected directory in Claude Code: a write that RESOLVES into it prompts, and no allow rule
 # pre-approves it. An account's memory link used to resolve there. So the folder moves out, and ~/.claude and every
 # account link straight to it — one hop, never through ~/.claude. This is the only thing the tool moves out of
-# ~/.claude (§9). It never deletes or overwrites memory and never merges two non-empty folders.
+# ~/.claude (§9). Memory first created inside an account is adopted the same way (§16.7): that folder becomes the
+# store folder. It never deletes or overwrites memory and never merges two non-empty folders.
 MEM_PROJECTS=()     # the projects every account links to the store for (set by migrate_memory)
 MEM_STORE_MADE=0    # under --dry-run the store is never created: say `would create` once, not per project
+MEM_ADOPTED=""      # account folders adopted in this run, one per line (under --dry-run they are still real folders)
+MEM_ACCOUNTS=()     # the slugs whose dirs may hold memory to adopt: registered accounts only, never "whatever is in ~/.claude-accounts"
+MEM_HOLDERS=""      # memory_holders: the accounts' own non-empty memory folders for one project, one path per line (for messages)
+MEM_HOLDER1=""      # … and the first of them on its own: the path that is moved is never cut out of a joined string
+MEM_NHOLD=0
+MEM_VERDICT=""      # memory_verdict: what a run does with one project
+NL='
+'
 dir_empty() { [ -z "$(ls -A -- "$1" 2>/dev/null)" ]; }
 memory_store_dir() {
   [ "$MEM_STORE_MADE" = 1 ] && return 0
   MEM_STORE_MADE=1
   ensure_dir "$MEMORY_STORE" 700
 }
-memory_projects() { # → every <p> with a memory entry in ~/.claude or a folder in the store, one per line
-  local m p
+memory_accounts() { # slug… → MEM_ACCOUNTS (setup: the account list; relink and status: the registry). Empty slugs are dropped.
+  local s
+  MEM_ACCOUNTS=()
+  for s in "$@"; do [ -n "$s" ] && MEM_ACCOUNTS[${#MEM_ACCOUNTS[@]}]=$s; done
+  return 0
+}
+memory_name() { # <p> → printed when it can be a project name. One name is one line here and one path component everywhere
+                # else, so a name with a newline or any other control character is not a project: it is left where it is.
+  case "$1" in '' | *[[:cntrl:]]*) return 0 ;; esac
+  printf '%s\n' "$1"
+}
+memory_projects() { # → every <p> with a memory entry in ~/.claude, a folder in the store, or files in an account's own folder
+  local m p i=0
   {
     for m in "$SEED_DIR"/projects/*/memory; do
       [ -d "$m" ] || [ -L "$m" ] || continue
-      p=${m%/memory}; printf '%s\n' "${p##*/}"
+      p=${m%/memory}; memory_name "${p##*/}"
     done
     for m in "$MEMORY_STORE"/*; do
       [ -d "$m" ] || continue
-      printf '%s\n' "${m##*/}"
+      memory_name "${m##*/}"
+    done
+    while [ $i -lt ${#MEM_ACCOUNTS[@]} ]; do
+      for m in "$ACCOUNTS_ROOT/${MEM_ACCOUNTS[$i]}"/projects/*/memory; do   # an EMPTY account folder holds no memory: not a project here
+        [ -d "$m" ] && [ ! -L "$m" ] && ! dir_empty "$m" || continue
+        p=${m%/memory}; memory_name "${p##*/}"
+      done
+      i=$((i + 1))
     done
   } | sort -u
 }
-# The §16.2 table, read-only (status counts with it, migrate_memory acts on it):
+# The §16.2 table: ~/.claude against the store, read-only.
 #   shared     ~/.claude links to the store folder          move      a real folder, and the store has none (or an empty one)
 #   unlinked   a store folder, nothing in ~/.claude         replace   an EMPTY real folder, and the store has one
 #   conflict   both hold files (or the store entry is no folder)       elsewhere  ~/.claude links somewhere else
-#   dangling   ~/.claude links to a store folder that is gone
-memory_state() { # project → one of the words above
-  local seed="$SEED_DIR/projects/$1/memory" store="$MEMORY_STORE/$1"
+#   dangling   ~/.claude links to a store folder that is gone          none       neither has anything (an account does)
+memory_state() { # project [adopted] → one of the words above. `adopted`: judge as if the store already held the folder
+                 # being adopted — under --dry-run it has not moved, and the lines printed must be the ones a real run prints
+  local seed="$SEED_DIR/projects/$1/memory" store="$MEMORY_STORE/$1" have=absent
+  if [ "${2:-}" = adopted ]; then have=full
+  elif [ -d "$store" ]; then if dir_empty "$store"; then have=empty; else have=full; fi
+  elif [ -e "$store" ] || [ -L "$store" ]; then have=blocked
+  fi
   if [ -L "$seed" ]; then
-    # -ef, not the link text: a link made by hand that lands on the store folder (trailing slash, relative) is fine
-    if [ -d "$store" ] && [ "$seed" -ef "$store" ]; then printf shared
-    elif [ "$(readlink -- "$seed")" = "$store" ]; then printf dangling
+    # -ef as well as the link text: a link made by hand that lands on the store folder (trailing slash, relative) is fine
+    if [ "$(readlink -- "$seed")" = "$store" ] || { [ -d "$store" ] && [ "$seed" -ef "$store" ]; }; then
+      case "$have" in absent | blocked) printf dangling ;; *) printf shared ;; esac
     else printf elsewhere
     fi
   elif [ -d "$seed" ]; then
-    if [ -d "$store" ]; then
-      if dir_empty "$seed"; then printf replace
-      elif dir_empty "$store"; then printf move
-      else printf conflict
-      fi
-    elif [ -e "$store" ] || [ -L "$store" ]; then printf conflict
-    else printf move
-    fi
+    case "$have" in
+      absent) printf move ;;
+      blocked) printf conflict ;;
+      empty) if dir_empty "$seed"; then printf replace; else printf move; fi ;;
+      full) if dir_empty "$seed"; then printf replace; else printf conflict; fi ;;
+    esac
   else
-    printf unlinked
+    case "$have" in absent | blocked) printf none ;; *) printf unlinked ;; esac
+  fi
+}
+memory_holders() { # project → MEM_HOLDERS, MEM_HOLDER1, MEM_NHOLD: every registered account's own real, non-empty memory folder for it
+  local m i=0
+  MEM_HOLDERS=""; MEM_HOLDER1=""; MEM_NHOLD=0
+  while [ $i -lt ${#MEM_ACCOUNTS[@]} ]; do
+    m="$ACCOUNTS_ROOT/${MEM_ACCOUNTS[$i]}/projects/$1/memory"; i=$((i + 1))
+    [ -d "$m" ] && [ ! -L "$m" ] && ! dir_empty "$m" || continue
+    [ "$MEM_NHOLD" = 0 ] && MEM_HOLDER1=$m
+    MEM_HOLDERS="$MEM_HOLDERS$m$NL"
+    MEM_NHOLD=$((MEM_NHOLD + 1))
+  done
+}
+memory_shared_content() { # project → true when ~/.claude or the store already holds files for it
+  local seed="$SEED_DIR/projects/$1/memory" store="$MEMORY_STORE/$1"
+  [ -d "$store" ] && ! dir_empty "$store" && return 0
+  [ -d "$seed" ] && [ ! -L "$seed" ] && ! dir_empty "$seed"
+}
+# What a run does with a project (status counts with it, migrate_memory acts on it): the memory_state word, or — when
+# neither ~/.claude nor the store holds files yet (§16.7) —
+#   adopt      exactly ONE account has its own folder: it becomes the store folder
+#   accounts   two or more accounts each have their own: never merged, nothing changes
+memory_verdict() { # project → MEM_VERDICT (and MEM_HOLDERS, MEM_NHOLD)
+  memory_holders "$1"
+  MEM_VERDICT=$(memory_state "$1")
+  case "$MEM_VERDICT" in conflict | elsewhere | dangling) return 0 ;; esac
+  memory_shared_content "$1" && return 0
+  case "$MEM_NHOLD" in
+    0) ;;
+    1) MEM_VERDICT=adopt ;;
+    *) MEM_VERDICT=accounts ;;
+  esac
+}
+
+move_into_store() { # folder store-folder — rename the folder into the store, leave a link where it was; undone when the link fails
+  local src="$1" store="$2" emptied=0
+  # the one place a folder is moved: it has to be a real projects/<p>/memory folder, whatever built the path
+  case "$src" in */projects/*/memory) ;; *) die "refusing to move $src: not a projects/<repo>/memory folder" ;; esac
+  [ -d "$src" ] && [ ! -L "$src" ] || die "refusing to move $src: not a real folder"
+  memory_store_dir
+  did "move $src to $store"
+  if ! dry; then
+    if [ -d "$store" ]; then rmdir -- "$store" || die "cannot replace the empty folder $store"; emptied=1; fi
+    if ! mv -- "$src" "$store"; then
+      [ "$emptied" = 1 ] && mkdir -- "$store"
+      die "cannot move $src to $store (nothing was changed)"
+    fi
+  fi
+  did "link $src -> $store"
+  if ! dry && ! ln -s -- "$store" "$src"; then
+    mv -- "$store" "$src" || die "cannot link $src -> $store, and the folder could not be moved back: it is in $store"
+    [ "$emptied" = 1 ] && mkdir -- "$store"
+    die "cannot link $src -> $store; the folder was moved back to $src"
   fi
 }
 
-migrate_memory() { # → MEM_PROJECTS. Moves each ~/.claude/projects/<p>/memory into the store and leaves a link behind.
-  local p seed store
-  MEM_PROJECTS=()
+migrate_memory() { # → MEM_PROJECTS. Moves each project's one real memory folder into the store and leaves a link behind.
+  local p seed store st holder
+  MEM_PROJECTS=(); MEM_ADOPTED=""
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     seed="$SEED_DIR/projects/$p/memory"; store="$MEMORY_STORE/$p"
-    case "$(memory_state "$p")" in
+    memory_verdict "$p"; st=$MEM_VERDICT
+    case "$st" in
+      adopt) # the account's folder becomes the store folder; ~/.claude is then judged against a store that holds it
+        holder=$MEM_HOLDER1
+        move_into_store "$holder" "$store"
+        MEM_ADOPTED="$MEM_ADOPTED$holder$NL"
+        st=$(memory_state "$p" adopted) ;;
+      accounts)
+        warn "memory conflict: $MEM_NHOLD accounts each hold their own memory for $p and nothing is shared yet ($(printf '%s' "$MEM_HOLDERS" | paste -s -d ' ' -)); nothing was changed for this repo (move the files into one of these folders by hand, empty the others, then run --relink)"
+        continue ;;
+    esac
+    case "$st" in
       shared) ;;
       unlinked) # the default account gets its link once it has used that repo; its project dir is never created here
         [ -d "$SEED_DIR/projects/$p" ] && ensure_link "$seed" "$store" ;;
       replace) ensure_link "$seed" "$store" ;;
-      move)
-        memory_store_dir
-        did "move $seed to $store"
-        if ! dry; then
-          if [ -d "$store" ]; then rmdir -- "$store" || die "cannot replace the empty folder $store"; fi
-          mv -- "$seed" "$store" || die "cannot move $seed to $store (nothing was changed)"
-        fi
-        did "link $seed -> $store"
-        if ! dry && ! ln -s -- "$store" "$seed"; then
-          mv -- "$store" "$seed" || die "cannot link $seed -> $store, and the folder could not be moved back: it is in $store"
-          die "cannot link $seed -> $store; the folder was moved back to $seed"
-        fi ;;
+      move) move_into_store "$seed" "$store" ;;
       conflict)
         warn "memory conflict: $seed and $store both hold files; nothing was changed for this repo and its account links were left as they are (merge the two folders by hand so that one of them is empty, then run --relink)"
         continue ;;
@@ -302,6 +385,7 @@ migrate_memory() { # → MEM_PROJECTS. Moves each ~/.claude/projects/<p>/memory 
       dangling)
         warn "$seed points at $store, which does not exist; left alone (restore that folder, or remove the link)"
         continue ;;
+      *) continue ;;
     esac
     MEM_PROJECTS[${#MEM_PROJECTS[@]}]=$p
   done <<EOF
@@ -310,11 +394,18 @@ EOF
 }
 
 link_memory_into() { # account-dir — one link per project in the store, straight to it (never through ~/.claude)
-  local p i=0
+  local p i=0 link
   while [ $i -lt ${#MEM_PROJECTS[@]} ]; do
     p=${MEM_PROJECTS[$i]}; i=$((i + 1))
+    link="$1/projects/$p/memory"
+    case "$NL$MEM_ADOPTED" in *"$NL$link$NL"*) continue ;; esac   # adopted above: a link already, or would be
+    if [ -d "$link" ] && [ ! -L "$link" ] && ! dir_empty "$link"; then
+      # not ensure_link's `mv … .unshared` hint: moved aside, these notes would be hidden from Claude, not shared
+      warn "$link holds this account's own memory for that repo, and $MEMORY_STORE/$p holds the shared one; left alone, so this account does not see the shared memory (move its files into $MEMORY_STORE/$p by hand, remove the emptied folder, then run --relink)"
+      continue
+    fi
     ensure_dir "$1/projects/$p" 700
-    ensure_link "$1/projects/$p/memory" "$MEMORY_STORE/$p"
+    ensure_link "$link" "$MEMORY_STORE/$p"
   done
 }
 
@@ -1488,19 +1579,24 @@ plugins_status_line() { # after load_registry: plugins: <n> shared, <o> own, <p>
   printf 'plugins: %s shared, %s own, %s pending\n' "$n" "$o" "$p"
 }
 
-memory_status_line() { # memory: <n> shared, <m> still in ~/.claude, <c> conflicts (§16.4)
-  local p n=0 m=0 c=0
+memory_status_line() { # memory: <n> shared, <m> still in ~/.claude, <a> in one account, <c> conflicts (§16.4)
+  local p n=0 m=0 a=0 c=0
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    case "$(memory_state "$p")" in
-      shared | unlinked) n=$((n + 1)) ;;
-      move | replace) m=$((m + 1)) ;;      # the next setup or relink moves it
-      *) c=$((c + 1)) ;;                   # conflict, elsewhere, dangling: setup names the paths; a human settles it
+    memory_verdict "$p"
+    case "$MEM_VERDICT" in
+      adopt) a=$((a + 1)) ;;                 # the next setup or relink makes that account's folder the shared one
+      shared | unlinked | move | replace)
+        if [ "$MEM_NHOLD" != 0 ]; then c=$((c + 1))      # an account keeps its own folder next to the shared one
+        elif [ "$MEM_VERDICT" = move ] || [ "$MEM_VERDICT" = replace ]; then m=$((m + 1))   # the next run moves it
+        else n=$((n + 1))
+        fi ;;
+      *) c=$((c + 1)) ;;                     # conflict, accounts, elsewhere, dangling: setup names the paths; a human settles it
     esac
   done <<EOF
 $(memory_projects)
 EOF
-  printf 'memory: %s shared, %s still in ~/.claude, %s conflicts\n' "$n" "$m" "$c"
+  printf 'memory: %s shared, %s still in ~/.claude, %s in one account, %s conflicts\n' "$n" "$m" "$a" "$c"
 }
 
 merge_local_into_shared() { # settings.local.json → shared, deepmerge; rc 1 when no tool can merge
@@ -1586,6 +1682,7 @@ cmd_status() {
   load_registry
   settings_status_line
   plugins_status_line
+  memory_accounts ${REG_SLUGS[@]+"${REG_SLUGS[@]}"}
   memory_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
@@ -1901,6 +1998,8 @@ cmd_relink() {
   [ -d "$ACCOUNTS_ROOT" ] || die "$ACCOUNTS_ROOT does not exist yet — run without --relink first"
   ensure_dir "$MULTI_DIR" 755
   seed_shared
+  load_registry
+  memory_accounts ${REG_SLUGS[@]+"${REG_SLUGS[@]}"}
   migrate_memory
   for d in "$ACCOUNTS_ROOT"/*/; do
     [ -d "$d" ] || continue
@@ -1912,7 +2011,6 @@ cmd_relink() {
   done
   # the two memory allow rules (§16.3) have to reach each account's own settings.json too, or bare `claude`
   # after `cuse` would still be asked: that is the settings step, so --relink runs it
-  load_registry
   sync_all_settings relink
   say ""
   if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
@@ -1952,6 +2050,7 @@ cmd_setup() { # also the second half of add / remove
 
   ensure_dir "$MULTI_DIR" 755
   seed_shared
+  memory_accounts ${SLUGS[@]+"${SLUGS[@]}"}
   migrate_memory
   [ ${#SLOTS[@]} -gt 0 ] && ensure_dir "$ACCOUNTS_ROOT" 755
   i=0

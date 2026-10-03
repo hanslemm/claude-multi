@@ -135,6 +135,11 @@ Two things decide whether a session prompts you:
   `relink` and `sync` append whichever is missing to `permissions.allow` in the shared file and change
   no other key or entry there. A copy you edited inside an account is still not overwritten, but it gains these
   two rules too. This needs `jq` or `python3`; without them a warning prints the two rules to add by hand.
+  What it gives up: a memory write from an account session used to stop at a prompt, and now it does
+  not, in any repo, for any repo's memory. Memory is read back into later sessions, so if you would
+  rather review those writes, move the two rules from `permissions.allow` to `permissions.ask` in
+  `~/.claude-shared/settings.json` (and in any account copy `status` counts as modified); setup sees
+  them there and adds nothing.
 - **Trust is per account per repository.** The trust dialog answer lives in each account's
   `.claude.json`, which the tool never touches, so accept it once per repo in each account; until then
   that repo's `.claude/settings.json` allow rules are ignored ("this workspace has not been trusted").
@@ -203,9 +208,13 @@ or replace it with your own script, if you already have one. An unpinned session
   resolves into it asks for permission, and no allow rule can pre-approve it. While the folder stayed
   in `~/.claude`, every memory write from an account session prompted. The move never deletes or
   overwrites memory and never merges two folders: if both `~/.claude` and the store hold files for
-  the same repo, nothing changes and a warning names both paths. `claude-multi setup --dry-run` shows
-  the `would move …` lines first; `claude-multi status` prints `memory: <shared>, <still in ~/.claude>,
-  <conflicts>`; `claude-multi relink` picks up a repo that gained memory later. To undo it for one
+  the same repo, nothing changes and a warning names both paths. Memory first created inside one
+  account (a repo you only ever opened with that account) is adopted the same way: that folder becomes
+  the shared one, and the other accounts see it from then on. If two accounts each wrote their own
+  before that, nothing is merged and the warning names both folders. `claude-multi setup --dry-run`
+  shows the `would move …` lines first; `claude-multi status` prints `memory: <shared>, <still in
+  ~/.claude>, <in one account>, <conflicts>`; `claude-multi relink` picks up a repo that gained memory
+  later. To undo it for one
   repo, with no session open in it: `rm ~/.claude/projects/<p>/memory` (that is the link), then
   `mv ~/.claude-shared/memory/<p> ~/.claude/projects/<p>/memory`.
 - **Plugins are shared.** Each account's `plugins/` is a symlink to `~/.claude/plugins`, so every account
