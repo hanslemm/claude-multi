@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # claude-multi-setup.sh — one Claude Code login per terminal.
 #
-# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12 of it).
+# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12–§16 of it).
 #
 # Produces:
 #   ~/.claude-accounts/<slug>/          one CLAUDE_CONFIG_DIR per account (own login, own Keychain entry, own
 #                                       .claude.json). Never deleted by this script.
 #   ~/.claude-shared/                   settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/,
 #                                       output-styles/ — seeded ONCE by COPYING from ~/.claude, never overwritten.
+#   ~/.claude-shared/memory/<repo>/     the per-repo auto-memory folders (v1.5, §16): MOVED here out of
+#                                       ~/.claude/projects/<repo>/memory, which becomes a link to it.
 #   ~/.claude-multi/bin/claude-<slug>   an EXECUTABLE launcher per account: a real file, so cron, CI, an editor
 #                                       or any tool that reads a command out of configuration can run it —
 #                                       execvp cannot see a shell function. The functions below delegate to it.
@@ -15,7 +17,7 @@
 #                                       claude-multi umbrella function (zsh + bash)
 #   ~/.claude-multi/accounts.tsv        slot<TAB>email<TAB>slug registry; a slug never changes once assigned
 #   ~/.claude-multi/claude-multi-setup.sh   self-installed copy of this script (the stable path)
-#   <account>/projects/<repo>/memory -> ~/.claude/projects/<repo>/memory   per-repo auto-memory, shared
+#   <account>/projects/<repo>/memory -> ~/.claude-shared/memory/<repo>   per-repo auto-memory, shared (one hop)
 #   <account>/plugins -> ~/.claude/plugins   one installed plugin set, marketplace list and cache for every account (v1.3)
 #
 # Sharing model: CLAUDE.md + the four directories are SYMLINKED into every account dir (Claude only reads
@@ -23,6 +25,8 @@
 # Claude Code rewrites settings.json on /config and would replace a symlink with a plain file. plugins/ is
 # symlinked to the default account's ~/.claude/plugins (§14): Claude Code writes there, but concurrent writers
 # are what several terminals of one account already are, and the canonical dir never moves.
+# Memory is the one thing that DOES move (§16): `.claude` is a protected directory in Claude Code, so a write that
+# resolves into it prompts whatever the allow rules say. The folder leaves ~/.claude and a link stays behind.
 #
 # Discovery: $ACCOUNT_ROWS if set, else cswap (`list --json`, `export <tmp>`, ANSI-stripped `list`), then the
 # union with accounts.tsv rows that carry a slot, then an interactive prompt (reads /dev/tty), then an error.
@@ -42,7 +46,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -55,6 +59,10 @@ LEGACY_ALIASES_FILE="$MULTI_DIR/aliases.zsh"
 REGISTRY_FILE="$MULTI_DIR/accounts.tsv"
 SYNC_FILE="$MULTI_DIR/settings-sync.tsv"   # slug<TAB>cksum of the settings.json last written into that account (§13)
 SEED_LOCAL="$HOME/.claude/settings.local.json"
+MEMORY_STORE="$SHARED_DIR/memory"          # <repo>/ per project: the real auto-memory folders (§16)
+# §16.3: with these two in permissions.allow a memory write matches a rule on the path Claude asked for AND on the file it resolves to
+MEMORY_RULE_ACCT='Edit(~/.claude-accounts/*/projects/*/memory/**)'
+MEMORY_RULE_STORE='Edit(~/.claude-shared/memory/**)'
 RC_MEMO_FILE="$MULTI_DIR/rc-file"   # the rc file --rc appended to, so status finds a custom --rc=FILE later
 INSTALL_PATH="$MULTI_DIR/$SCRIPT_NAME"
 SEED_DIR="$HOME/.claude"
@@ -136,7 +144,8 @@ commands:
 
 flags:
   --dry-run      print every change as '[dry-run] would …'; create nothing
-  --relink       only (re)create the shared + memory + plugins symlinks in the account dirs that already exist
+  --relink       only the links and what they need: the shared + memory + plugins symlinks in the account dirs
+                 that already exist, the move of new memory folders out of ~/.claude, and the settings sync
   --rc[=FILE]    append the source line to the rc file (by \$SHELL, or FILE), once; never touched otherwise
   --no-input     never prompt (scripted / AI-driven runs); exit 1 with instructions instead
 
@@ -208,14 +217,104 @@ link_shared_into() { # account-dir
   for n in $SHARED_LINKS; do ensure_link "$1/$n" "$SHARED_DIR/$n"; done
 }
 
-link_memory_into() { # account-dir — every repo whose auto-memory exists in ~/.claude gets a link to it
+# ---------- shared memory (§16): the real folder is ~/.claude-shared/memory/<p>, outside ~/.claude ----------
+# `.claude` is a protected directory in Claude Code: a write that RESOLVES into it prompts, and no allow rule
+# pre-approves it. An account's memory link used to resolve there. So the folder moves out, and ~/.claude and every
+# account link straight to it — one hop, never through ~/.claude. This is the only thing the tool moves out of
+# ~/.claude (§9). It never deletes or overwrites memory and never merges two non-empty folders.
+MEM_PROJECTS=()     # the projects every account links to the store for (set by migrate_memory)
+MEM_STORE_MADE=0    # under --dry-run the store is never created: say `would create` once, not per project
+dir_empty() { [ -z "$(ls -A -- "$1" 2>/dev/null)" ]; }
+memory_store_dir() {
+  [ "$MEM_STORE_MADE" = 1 ] && return 0
+  MEM_STORE_MADE=1
+  ensure_dir "$MEMORY_STORE" 700
+}
+memory_projects() { # → every <p> with a memory entry in ~/.claude or a folder in the store, one per line
   local m p
-  [ -d "$SEED_DIR/projects" ] || return 0
-  for m in "$SEED_DIR"/projects/*/memory; do
-    [ -d "$m" ] && [ ! -L "$m" ] || continue
-    p=${m%/memory}; p=${p##*/}
+  {
+    for m in "$SEED_DIR"/projects/*/memory; do
+      [ -d "$m" ] || [ -L "$m" ] || continue
+      p=${m%/memory}; printf '%s\n' "${p##*/}"
+    done
+    for m in "$MEMORY_STORE"/*; do
+      [ -d "$m" ] || continue
+      printf '%s\n' "${m##*/}"
+    done
+  } | sort -u
+}
+# The §16.2 table, read-only (status counts with it, migrate_memory acts on it):
+#   shared     ~/.claude links to the store folder          move      a real folder, and the store has none (or an empty one)
+#   unlinked   a store folder, nothing in ~/.claude         replace   an EMPTY real folder, and the store has one
+#   conflict   both hold files (or the store entry is no folder)       elsewhere  ~/.claude links somewhere else
+#   dangling   ~/.claude links to a store folder that is gone
+memory_state() { # project → one of the words above
+  local seed="$SEED_DIR/projects/$1/memory" store="$MEMORY_STORE/$1"
+  if [ -L "$seed" ]; then
+    # -ef, not the link text: a link made by hand that lands on the store folder (trailing slash, relative) is fine
+    if [ -d "$store" ] && [ "$seed" -ef "$store" ]; then printf shared
+    elif [ "$(readlink -- "$seed")" = "$store" ]; then printf dangling
+    else printf elsewhere
+    fi
+  elif [ -d "$seed" ]; then
+    if [ -d "$store" ]; then
+      if dir_empty "$seed"; then printf replace
+      elif dir_empty "$store"; then printf move
+      else printf conflict
+      fi
+    elif [ -e "$store" ] || [ -L "$store" ]; then printf conflict
+    else printf move
+    fi
+  else
+    printf unlinked
+  fi
+}
+
+migrate_memory() { # → MEM_PROJECTS. Moves each ~/.claude/projects/<p>/memory into the store and leaves a link behind.
+  local p seed store
+  MEM_PROJECTS=()
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    seed="$SEED_DIR/projects/$p/memory"; store="$MEMORY_STORE/$p"
+    case "$(memory_state "$p")" in
+      shared) ;;
+      unlinked) # the default account gets its link once it has used that repo; its project dir is never created here
+        [ -d "$SEED_DIR/projects/$p" ] && ensure_link "$seed" "$store" ;;
+      replace) ensure_link "$seed" "$store" ;;
+      move)
+        memory_store_dir
+        did "move $seed to $store"
+        if ! dry; then
+          if [ -d "$store" ]; then rmdir -- "$store" || die "cannot replace the empty folder $store"; fi
+          mv -- "$seed" "$store" || die "cannot move $seed to $store (nothing was changed)"
+        fi
+        did "link $seed -> $store"
+        if ! dry && ! ln -s -- "$store" "$seed"; then
+          mv -- "$store" "$seed" || die "cannot link $seed -> $store, and the folder could not be moved back: it is in $store"
+          die "cannot link $seed -> $store; the folder was moved back to $seed"
+        fi ;;
+      conflict)
+        warn "memory conflict: $seed and $store both hold files; nothing was changed for this repo and its account links were left as they are (merge the two folders by hand so that one of them is empty, then run --relink)"
+        continue ;;
+      elsewhere)
+        warn "$seed is a symlink to $(readlink -- "$seed"), not to $store; left alone (remove the link, or point it at $store, then run --relink)"
+        [ -d "$store" ] || continue ;;
+      dangling)
+        warn "$seed points at $store, which does not exist; left alone (restore that folder, or remove the link)"
+        continue ;;
+    esac
+    MEM_PROJECTS[${#MEM_PROJECTS[@]}]=$p
+  done <<EOF
+$(memory_projects)
+EOF
+}
+
+link_memory_into() { # account-dir — one link per project in the store, straight to it (never through ~/.claude)
+  local p i=0
+  while [ $i -lt ${#MEM_PROJECTS[@]} ]; do
+    p=${MEM_PROJECTS[$i]}; i=$((i + 1))
     ensure_dir "$1/projects/$p" 700
-    ensure_link "$1/projects/$p/memory" "$m"
+    ensure_link "$1/projects/$p/memory" "$MEMORY_STORE/$p"
   done
 }
 
@@ -836,8 +935,8 @@ gen_aliases() { # → stdout
 # Do not edit; re-run the script (or \`claude-multi-setup.sh add|remove <email>\`). Sourced by zsh and bash.
 #
 # One Claude Code login per terminal. Every account owns a CLAUDE_CONFIG_DIR under ~/.claude-accounts, which
-# relocates the whole ~/.claude tree, .claude.json AND the macOS Keychain credential entry. ~/.claude itself is
-# untouched and stays the default account.
+# relocates the whole ~/.claude tree, .claude.json AND the macOS Keychain credential entry. ~/.claude itself
+# stays the default account; only its per-repo memory folders move, to ~/.claude-shared/memory (a link stays).
 #
 #   claude-<slug> [args…]   run Claude Code as that account, for this command only, with the shared
 #                           ~/.claude-shared/settings.json + mcp.json and ANTHROPIC_API_KEY removed
@@ -994,7 +1093,7 @@ claude-multi() { # <verb> [args…] — a function, so `use` can change THIS she
         '  add <email> [--slot N]            register an account and create its dir + launcher' \
         '  remove <email>        forget an account (its dir and login are kept)' \
         '  setup [--dry-run] [--rc[=FILE]] [--no-input]   re-run the setup (discover, seed, link, aliases)' \
-        '  relink                only (re)create the shared + memory + plugins symlinks (= setup --relink)' \
+        '  relink                only the shared + memory + plugins symlinks, new memory folders and the settings sync (= setup --relink)' \
         '  update [--dry-run]    fetch the latest claude-multi-setup.sh from GitHub and re-run setup' \
         '  sync [--force [slug]] copy the shared settings.json into every account, so bare claude after cuse gets the same permissions' \
         '  help                  this table' \
@@ -1260,6 +1359,29 @@ PY
   cp -- "$SHARED_DIR/settings.json" "$out"
 }
 
+# §16.3 — the two memory allow rules. An allow rule applies only when BOTH the path Claude asked for and the file
+# it resolves to match one: the first rule covers the account's own path, the second the store behind the link.
+settings_has_memory_rules() { # file → both rules are in it. A text test: it needs no JSON tool, and a rule the user moved to deny/ask is not fought.
+  grep -qF -- "\"$MEMORY_RULE_ACCT\"" "$1" 2>/dev/null && grep -qF -- "\"$MEMORY_RULE_STORE\"" "$1" 2>/dev/null
+}
+add_memory_rules() { # settings-file → permissions.allow gains the missing rule(s) at its end; nothing else in the file changes
+  local f="$1" src="$1" out
+  if [ ! -f "$f" ]; then
+    dry && [ "$f" = "$SHARED_DIR/settings.json" ] || return 0
+    src="$SEED_DIR/settings.json"    # --dry-run before the first seeding: judge the file that would be copied
+  fi
+  [ -f "$src" ] && settings_has_memory_rules "$src" && return 0
+  mk_tmp; out="$TMP_DIR/memory-rules.merged.json"
+  printf '{"permissions": {"allow": ["%s", "%s"]}}\n' "$MEMORY_RULE_ACCT" "$MEMORY_RULE_STORE" > "$TMP_DIR/memory-rules.json" || die "cannot write to $TMP_DIR"
+  if [ -f "$src" ] && ! json_deepmerge "$src" "$TMP_DIR/memory-rules.json" > "$out" 2>/dev/null; then
+    warn "cannot add the memory allow rules to $f (that needs jq or python3, and valid JSON in the file). Add \"$MEMORY_RULE_ACCT\" and \"$MEMORY_RULE_STORE\" to permissions.allow there by hand; until then a memory write asks for permission"
+    return 0
+  fi
+  did "allow memory writes in $f (two Edit rules in permissions.allow)"
+  dry && return 0
+  { cp -- "$out" "$f.tmp" && chmod 600 "$f.tmp" && mv -f -- "$f.tmp" "$f"; } || die "cannot write $f"
+}
+
 SYNC_SLUGS=()
 SYNC_SUMS=()
 sync_load() {
@@ -1285,7 +1407,7 @@ sync_save() { # rewrite the state file only when its content changes
   printf '%s' "$content" > "$SYNC_FILE" || die "cannot write $SYNC_FILE"
 }
 
-sync_account() { # slug mode(setup|sync)
+sync_account() { # slug mode(setup|relink|sync)
   local slug=$1 mode=$2 dir acct tmp cur rec reason=""
   dir="$ACCOUNTS_ROOT/$slug"; acct="$dir/settings.json"
   if [ ! -d "$dir" ]; then [ "$mode" = sync ] && note "settings: $slug has no account dir yet (run: $(self_cmd) setup)"; return 0; fi
@@ -1305,8 +1427,11 @@ sync_account() { # slug mode(setup|sync)
     elif settings_untouched "$acct"; then reason=untouched
     elif [ "$FORCE_SYNC" = 1 ] && { [ -z "$FORCE_SLUG" ] || [ "$FORCE_SLUG" = "$slug" ]; }; then reason=forced
     else
-      if [ "$mode" = sync ]; then note "settings: $slug modified since the last sync — kept (run: $(self_cmd) sync --force $slug)"
-      else warn "settings: $slug modified since the last sync — kept, so bare 'claude' under 'cuse $slug' keeps that account's own permissions (run: $(self_cmd) sync --force $slug to overwrite)"; fi
+      add_memory_rules "$acct"   # §16.3: a kept copy still gains the two memory rules — additively, so nothing of the account's is lost
+      case "$mode" in
+        sync) note "settings: $slug modified since the last sync — kept (run: $(self_cmd) sync --force $slug)" ;;
+        setup) warn "settings: $slug modified since the last sync — kept, so bare 'claude' under 'cuse $slug' keeps that account's own permissions (run: $(self_cmd) sync --force $slug to overwrite)" ;;
+      esac
       return 0
     fi
   else
@@ -1319,15 +1444,16 @@ sync_account() { # slug mode(setup|sync)
   sync_set "$slug" "$(file_cksum "$acct")"
 }
 
-sync_all_settings() { # mode(setup|sync): setup walks SLUGS (the accounts just set up), sync walks the registry
+sync_all_settings() { # mode(setup|relink|sync): setup walks SLUGS (the accounts just set up), relink and sync walk the registry
   local i=0
+  add_memory_rules "$SHARED_DIR/settings.json"
   [ -f "$SHARED_DIR/settings.json" ] || return 0
   settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
   sync_load
   if [ "$1" = setup ]; then
     while [ $i -lt ${#SLUGS[@]} ]; do sync_account "${SLUGS[$i]}" setup; i=$((i + 1)); done
   else
-    while [ $i -lt ${#REG_SLUGS[@]} ]; do [ -n "${REG_SLUGS[$i]}" ] && sync_account "${REG_SLUGS[$i]}" sync; i=$((i + 1)); done
+    while [ $i -lt ${#REG_SLUGS[@]} ]; do [ -n "${REG_SLUGS[$i]}" ] && sync_account "${REG_SLUGS[$i]}" "$1"; i=$((i + 1)); done
   fi
   sync_save
 }
@@ -1360,6 +1486,21 @@ plugins_status_line() { # after load_registry: plugins: <n> shared, <o> own, <p>
     fi
   done
   printf 'plugins: %s shared, %s own, %s pending\n' "$n" "$o" "$p"
+}
+
+memory_status_line() { # memory: <n> shared, <m> still in ~/.claude, <c> conflicts (§16.4)
+  local p n=0 m=0 c=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$(memory_state "$p")" in
+      shared | unlinked) n=$((n + 1)) ;;
+      move | replace) m=$((m + 1)) ;;      # the next setup or relink moves it
+      *) c=$((c + 1)) ;;                   # conflict, elsewhere, dangling: setup names the paths; a human settles it
+    esac
+  done <<EOF
+$(memory_projects)
+EOF
+  printf 'memory: %s shared, %s still in ~/.claude, %s conflicts\n' "$n" "$m" "$c"
 }
 
 merge_local_into_shared() { # settings.local.json → shared, deepmerge; rc 1 when no tool can merge
@@ -1412,7 +1553,7 @@ summary() {
   [ ${#SLOTS[@]} -gt 0 ] || note "(none)"
   say ""
   say "Shared config: $SHARED_DIR (settings.json + mcp.json via flags; CLAUDE.md, commands/, agents/, skills/, output-styles/ symlinked)"
-  say "Shared memory: $SEED_DIR/projects/<repo>/memory, linked from each account's projects/<repo>/memory (re-run or --relink after a new repo gets memory)"
+  say "Shared memory: $MEMORY_STORE/<repo>, linked from $SEED_DIR/projects/<repo>/memory and from each account's projects/<repo>/memory (re-run or --relink after a new repo gets memory)"
   if plugins_seed_present; then
     say "Shared plugins: $SEED_DIR/plugins, linked from each account's plugins/ (one installed set, marketplace list and cache; which are enabled comes from settings.json)"
   else
@@ -1445,6 +1586,7 @@ cmd_status() {
   load_registry
   settings_status_line
   plugins_status_line
+  memory_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
   settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
@@ -1759,6 +1901,7 @@ cmd_relink() {
   [ -d "$ACCOUNTS_ROOT" ] || die "$ACCOUNTS_ROOT does not exist yet — run without --relink first"
   ensure_dir "$MULTI_DIR" 755
   seed_shared
+  migrate_memory
   for d in "$ACCOUNTS_ROOT"/*/; do
     [ -d "$d" ] || continue
     d=${d%/}
@@ -1767,6 +1910,10 @@ cmd_relink() {
     link_memory_into "$d"
     link_plugins_into "$d"
   done
+  # the two memory allow rules (§16.3) have to reach each account's own settings.json too, or bare `claude`
+  # after `cuse` would still be asked: that is the settings step, so --relink runs it
+  load_registry
+  sync_all_settings relink
   say ""
   if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
 }
@@ -1805,6 +1952,7 @@ cmd_setup() { # also the second half of add / remove
 
   ensure_dir "$MULTI_DIR" 755
   seed_shared
+  migrate_memory
   [ ${#SLOTS[@]} -gt 0 ] && ensure_dir "$ACCOUNTS_ROOT" 755
   i=0
   while [ $i -lt ${#SLOTS[@]} ]; do

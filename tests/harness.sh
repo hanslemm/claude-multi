@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
+# + §16.6 (T12 rewritten, T28–T31)
 # for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
@@ -36,7 +37,10 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31"
+# §16.3: the two allow rules every settings file gains, so a memory write is pre-approved on both paths
+MEM_RULE_ACCT='Edit(~/.claude-accounts/*/projects/*/memory/**)'
+MEM_RULE_STORE='Edit(~/.claude-shared/memory/**)'
 
 TOTAL_OK=0
 TOTAL_FAIL=0
@@ -471,7 +475,12 @@ assert_four_accounts() { # the T1–T4 result
   out_has "summary: rc file line" "rc file: "
 }
 assert_shared_seeded() {
-  assert_same_file "shared settings.json byte-identical to seed" "$H/.claude/settings.json" "$H/.claude-shared/settings.json"
+  assert_file_has "shared settings.json carries the seed's allow rule" "$H/.claude-shared/settings.json" '"Bash(ls:*)"'
+  if command -v jq >/dev/null 2>&1; then   # §16.3: the seed, plus the two memory rules at the end of permissions.allow — key order kept
+    assert_eq "shared settings.json = the seed + the two memory allow rules, nothing else disturbed" \
+      "$(jq -c --arg a "$MEM_RULE_ACCT" --arg b "$MEM_RULE_STORE" '.permissions.allow += [$a, $b]' "$H/.claude/settings.json" 2>/dev/null)" \
+      "$(jq -c . "$H/.claude-shared/settings.json" 2>/dev/null)"
+  fi
   assert_dir "shared skills is a real copied dir" "$H/.claude-shared/skills"
   assert_same_file "shared skills/demo/SKILL.md copied" "$H/.claude/skills/demo/SKILL.md" "$H/.claude-shared/skills/demo/SKILL.md"
   assert_same_file "shared commands/hi.md copied" "$H/.claude/commands/hi.md" "$H/.claude-shared/commands/hi.md"
@@ -652,36 +661,59 @@ case_T11() { # --relink after deleting one link
   assert_eq "aliases.sh not regenerated" "" "$(find "$H/.claude-multi/aliases.sh" -newer "$T/stamp" 2>/dev/null)"
 }
 
-case_T12() { # per-repo memory links
+case_T12() { # per-repo memory (§16): the folder lives in ~/.claude-shared/memory/<p>; ~/.claude and every account link to it
   local pa="-Users-x-repo-a" pb="-Users-x-repo-b" pc="-Users-x-repo-c" pd="-Users-x-repo-d"
+  local store="$H/.claude-shared/memory" seedp="$H/.claude/projects" ia tree
   set_cswap absent
-  mkdir -p "$H/.claude/projects/$pa/memory" "$H/.claude/projects/$pb/memory" "$H/.claude/projects/$pc"
-  printf '# memory a\n' > "$H/.claude/projects/$pa/memory/MEMORY.md"
-  printf '{}\n' > "$H/.claude/projects/$pc/session.jsonl"
-  snapshot_seed; touch "$T/stamp-seed"
+  mkdir -p "$seedp/$pa/memory" "$seedp/$pb/memory" "$seedp/$pc"
+  printf '# memory a\n' > "$seedp/$pa/memory/MEMORY.md"
+  printf '{}\n' > "$seedp/$pc/session.jsonl"
+  cp "$seedp/$pa/memory/MEMORY.md" "$T/memory-a.before"
+  ia=$(inode_of "$seedp/$pa/memory")
+  tree=$( cd "$H" && find .claude .claude.json ! -path '*/memory' ! -path '*/memory/*' | sort )
   mkdir -p "$H/.claude-accounts/alice/projects/$pa/memory"          # alice: EMPTY real dir → replaced
   mkdir -p "$H/.claude-accounts/bob/projects/$pa/memory"            # bob: non-empty real dir → warned, kept
   printf 'bob notes\n' > "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md"
   cp "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md" "$T/bob-notes.before"
   run_script "ACCOUNT_ROWS=1${TAB}alice@example.com${NL}2${TAB}bob@example.com" -- setup
   assert_rc "setup (warnings are not errors)" 0
-  assert_link_to "alice repo-a: empty dir replaced by link" "$H/.claude-accounts/alice/projects/$pa/memory" "$H/.claude/projects/$pa/memory"
+  # the folder leaves ~/.claude: moved (not copied) into the store, a link stays behind
+  assert_dir "repo-a: the real folder is in the store" "$store/$pa"
+  assert_eq "repo-a: moved, not copied (same inode)" "$ia" "$(inode_of "$store/$pa")"
+  assert_same_file "repo-a: MEMORY.md intact in the store" "$T/memory-a.before" "$store/$pa/MEMORY.md"
+  assert_link_to "repo-a: ~/.claude keeps a link to the store" "$seedp/$pa/memory" "$store/$pa"
+  assert_same_file "repo-a: MEMORY.md readable through ~/.claude" "$T/memory-a.before" "$seedp/$pa/memory/MEMORY.md"
+  out_line "change line: the move" "  + move $seedp/$pa/memory to $store/$pa"
+  out_line "change line: the link left behind" "  + link $seedp/$pa/memory -> $store/$pa"
+  assert_dir "repo-b (empty memory dir in ~/.claude): moved too" "$store/$pb"
+  assert_link_to "repo-b: ~/.claude links to the store" "$seedp/$pb/memory" "$store/$pb"
+  assert_absent "repo-c (no memory dir): nothing in the store" "$store/$pc"
+  assert_absent "repo-c: no memory link made in ~/.claude" "$seedp/$pc/memory"
+  assert_mode "the store is mode 700" "$store" "drwx------"
+  assert_eq "nothing else under ~/.claude added or removed" "$tree" "$( cd "$H" && find .claude .claude.json ! -path '*/memory' ! -path '*/memory/*' | sort )"
+  assert_same_file "~/.claude.json byte-identical" "$T/claude.json.seed" "$H/.claude.json"
+  assert_same_file "~/.claude/settings.json byte-identical" "$FIX/seed-settings.json" "$H/.claude/settings.json"
+  # every account links straight to the store: one hop, never through ~/.claude
+  assert_link_to "alice repo-a: empty dir replaced by a link to the store" "$H/.claude-accounts/alice/projects/$pa/memory" "$store/$pa"
   out_has "change line says 'replace empty dir'" "replace empty dir"
   assert_dir "bob repo-a: non-empty dir left alone" "$H/.claude-accounts/bob/projects/$pa/memory"
   assert_same_file "bob's NOTES.md intact" "$T/bob-notes.before" "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md"
   err_has "warning names bob's path" "$H/.claude-accounts/bob/projects/$pa/memory"
   err_has "warning says left alone" "left alone"
-  assert_link_to "alice repo-b (empty memory dir in ~/.claude) linked" "$H/.claude-accounts/alice/projects/$pb/memory" "$H/.claude/projects/$pb/memory"
+  assert_link_to "alice repo-b linked to the store" "$H/.claude-accounts/alice/projects/$pb/memory" "$store/$pb"
+  assert_link_to "bob repo-b linked to the store" "$H/.claude-accounts/bob/projects/$pb/memory" "$store/$pb"
   assert_absent "repo-c (no memory dir) skipped for alice" "$H/.claude-accounts/alice/projects/$pc"
   assert_absent "repo-c skipped for bob" "$H/.claude-accounts/bob/projects/$pc"
   assert_mode "alice/projects/repo-b is mode 700" "$H/.claude-accounts/alice/projects/$pb" "drwx------"
-  assert_seed_untouched
-  # a repo that gains memory later is picked up by --relink
-  mkdir -p "$H/.claude/projects/$pd/memory"; printf '# memory d\n' > "$H/.claude/projects/$pd/memory/MEMORY.md"
+  out_has "summary: Shared memory names the store" "Shared memory: $store/<repo>"
+  # a repo that gains memory later is picked up by --relink: moved, then linked everywhere
+  mkdir -p "$seedp/$pd/memory"; printf '# memory d\n' > "$seedp/$pd/memory/MEMORY.md"
   run_script -- --relink
   assert_rc "--relink" 0
-  assert_link_to "alice repo-d linked by --relink" "$H/.claude-accounts/alice/projects/$pd/memory" "$H/.claude/projects/$pd/memory"
-  assert_link_to "bob repo-d linked by --relink" "$H/.claude-accounts/bob/projects/$pd/memory" "$H/.claude/projects/$pd/memory"
+  assert_file_has "repo-d moved into the store by --relink" "$store/$pd/MEMORY.md" '# memory d'
+  assert_link_to "repo-d: ~/.claude links to the store" "$seedp/$pd/memory" "$store/$pd"
+  assert_link_to "alice repo-d linked by --relink" "$H/.claude-accounts/alice/projects/$pd/memory" "$store/$pd"
+  assert_link_to "bob repo-d linked by --relink" "$H/.claude-accounts/bob/projects/$pd/memory" "$store/$pd"
   assert_mode "alice/projects/repo-d is mode 700" "$H/.claude-accounts/alice/projects/$pd" "drwx------"
   assert_dir "bob repo-a still a real dir after --relink" "$H/.claude-accounts/bob/projects/$pa/memory"
 }
@@ -880,8 +912,9 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   assert_rc "status on a fresh HOME" 0
   assert_file_empty "status prints nothing on stderr" "$T/err"
   order_fresh=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins rc terminal next " "$order_fresh"
+  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins memory rc terminal next " "$order_fresh"
   out_line "plugins: nothing registered yet" "plugins: 0 shared, 0 own, 0 pending"
+  out_line "memory: no repo has memory yet" "memory: 0 shared, 0 still in ~/.claude, 0 conflicts"
   out_line "cswap found" "cswap: found at $H/bin/cswap"
   out_line "shared missing" "shared: missing"
   out_line "aliases missing" "aliases: missing"
@@ -896,7 +929,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   run_script -- status
   assert_rc "status after setup" 0
   order_setup=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order_setup"
+  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order_setup"
   out_line "plugins: every account linked" "plugins: 4 shared, 0 own, 0 pending"
   assert_true "script: names an existing file" test -f "$(sed -n 's/^script: //p' "$T/out")"
   out_matches "version: has a value" '^version: [^ ]'
@@ -1225,7 +1258,7 @@ case_T21() { # status --verify
   run_script -- status --verify
   assert_rc "status --verify" 0
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order"
+  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
   out_line "verified: hans-betterdoc not logged in" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
@@ -1671,9 +1704,225 @@ case_T27() { # executable launchers (§15): a real file per account, the functio
   assert_exists "alice's launcher survived" "$bin/claude-alice"
 }
 
+case_T28() { # §16.2 the migration table: one project per row, one run; then the rollback and the status counts
+  local seedp="$H/.claude/projects" store="$H/.claude-shared/memory" al="$H/.claude-accounts/alice/projects"
+  local p1="-r-move" p2="-r-empty" p3="-r-conflict" p4="-r-linked" p5="-r-elsewhere" p6="-r-emptystore" p7="-r-storeonly" p8="-r-rollback" p9="-r-dangling"
+  local rows="1${TAB}alice@example.com"
+  set_cswap absent
+  mkdir -p "$seedp/$p1/memory"; printf 'one\n' > "$seedp/$p1/memory/MEMORY.md"            # real dir | store absent
+  mkdir -p "$seedp/$p2/memory" "$store/$p2"; printf 'two\n' > "$store/$p2/MEMORY.md"       # empty real dir | store present
+  mkdir -p "$seedp/$p3/memory" "$store/$p3"                                                # non-empty | non-empty
+  printf 'seed side\n' > "$seedp/$p3/memory/SEED.md"; printf 'store side\n' > "$store/$p3/STORE.md"
+  mkdir -p "$seedp/$p4" "$store/$p4"; printf 'four\n' > "$store/$p4/MEMORY.md"             # link to the store | present
+  ln -s "$store/$p4" "$seedp/$p4/memory"
+  mkdir -p "$seedp/$p5" "$T/elsewhere"; printf 'five\n' > "$T/elsewhere/MEMORY.md"         # link elsewhere | absent
+  ln -s "$T/elsewhere" "$seedp/$p5/memory"
+  mkdir -p "$seedp/$p6/memory" "$store/$p6"; printf 'six\n' > "$seedp/$p6/memory/MEMORY.md"  # non-empty | present but empty
+  mkdir -p "$seedp/$p7" "$store/$p7"; printf 'seven\n' > "$store/$p7/MEMORY.md"            # no memory in ~/.claude | present
+  mkdir -p "$seedp/$p9"; ln -s "$store/$p9" "$seedp/$p9/memory"                            # link to the store | absent
+  mkdir -p "$al/$p3"; ln -s "$seedp/$p3/memory" "$al/$p3/memory"                           # alice: a v1.4 link into ~/.claude
+  run_script -- status
+  out_line "status before: what is shared, what a run would move, what needs a human" "memory: 2 shared, 3 still in ~/.claude, 3 conflicts"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup (a conflict is a warning, not an error)" 0
+  # row 1: real dir, no store → moved, a link stays behind
+  assert_file_has "row 1: the folder is in the store" "$store/$p1/MEMORY.md" 'one'
+  assert_link_to "row 1: ~/.claude links to the store" "$seedp/$p1/memory" "$store/$p1"
+  assert_link_to "row 1: alice links to the store" "$al/$p1/memory" "$store/$p1"
+  # row 2: empty real dir, store present → replaced with a link
+  assert_link_to "row 2: the empty dir became a link" "$seedp/$p2/memory" "$store/$p2"
+  assert_file_has "row 2: the store's file is intact" "$store/$p2/MEMORY.md" 'two'
+  out_has "row 2: reported as 'replace empty dir'" "replace empty dir $seedp/$p2/memory"
+  # row 3: both non-empty → nothing changes, both paths named
+  assert_dir "row 3: ~/.claude still holds its folder" "$seedp/$p3/memory"
+  assert_file_has "row 3: the ~/.claude side is intact" "$seedp/$p3/memory/SEED.md" 'seed side'
+  assert_file_has "row 3: the store side is intact" "$store/$p3/STORE.md" 'store side'
+  assert_absent "row 3: nothing was merged into the store" "$store/$p3/SEED.md"
+  assert_absent "row 3: nothing was merged into ~/.claude" "$seedp/$p3/memory/STORE.md"
+  err_matches "row 3: the warning says conflict" 'warning: .*conflict'
+  err_has "row 3: the warning names the ~/.claude path" "$seedp/$p3/memory"
+  err_has "row 3: the warning names the store path" "$store/$p3"
+  assert_link_to "row 3: alice's link is not repointed" "$al/$p3/memory" "$seedp/$p3/memory"
+  # row 4: already a link to the store → nothing
+  assert_link_to "row 4: the link is as it was" "$seedp/$p4/memory" "$store/$p4"
+  out_lacks "row 4: no change line names it" "$seedp/$p4/memory"
+  assert_link_to "row 4: alice links to the store" "$al/$p4/memory" "$store/$p4"
+  # row 5: a link somewhere else → left alone, warned
+  assert_link_to "row 5: the link is as it was" "$seedp/$p5/memory" "$T/elsewhere"
+  err_has "row 5: the warning names the path" "$seedp/$p5/memory"
+  assert_absent "row 5: no store folder made" "$store/$p5"
+  assert_absent "row 5: nothing linked for alice" "$al/$p5"
+  assert_file_has "row 5: the other folder is intact" "$T/elsewhere/MEMORY.md" 'five'
+  # a link to a store folder that is gone → left alone, warned; nothing is created for it
+  assert_link_to "dangling: the link is as it was" "$seedp/$p9/memory" "$store/$p9"
+  err_has "dangling: the warning says the folder does not exist" "$store/$p9, which does not exist"
+  assert_absent "dangling: no store folder made" "$store/$p9"
+  assert_absent "dangling: nothing linked for alice" "$al/$p9"
+  # beyond the table: an empty store folder does not block the move; a store with no memory in ~/.claude gets its link
+  assert_file_has "empty store folder: ~/.claude's files moved in" "$store/$p6/MEMORY.md" 'six'
+  assert_link_to "empty store folder: ~/.claude links to the store" "$seedp/$p6/memory" "$store/$p6"
+  assert_link_to "store only: ~/.claude gains the link" "$seedp/$p7/memory" "$store/$p7"
+  assert_link_to "store only: alice links to the store" "$al/$p7/memory" "$store/$p7"
+  run_script -- status
+  out_line "status after: only the three a human must settle remain" "memory: 5 shared, 0 still in ~/.claude, 3 conflicts"
+  # the warnings repeat on a re-run; nothing else happens
+  run_script -- setup
+  assert_rc "second setup" 0
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  err_matches "the conflict is still reported" 'warning: .*conflict'
+  # rollback: when the link cannot be made, the folder goes back where it was
+  mkdir -p "$seedp/$p8/memory"; printf 'eight\n' > "$seedp/$p8/memory/MEMORY.md"
+  printf '#!/bin/sh\nexit 1\n' > "$H/bin/ln"; chmod 755 "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink with a failing ln" 1
+  assert_dir "rollback: ~/.claude holds the folder again" "$seedp/$p8/memory"
+  assert_file_has "rollback: its file is intact" "$seedp/$p8/memory/MEMORY.md" 'eight'
+  assert_absent "rollback: nothing left in the store" "$store/$p8"
+  err_has "rollback: the error says it was moved back" "moved back"
+  rm -f "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink once ln works again" 0
+  assert_link_to "then the move goes through" "$seedp/$p8/memory" "$store/$p8"
+  assert_file_has "and the file is in the store" "$store/$p8/MEMORY.md" 'eight'
+}
+
+case_T29() { # upgrade from the v1.4 layout: --dry-run, the move, account links repointed off ~/.claude, idempotent re-run
+  local pa="-Users-x-repo-a" pb="-Users-x-repo-b" seedp="$H/.claude/projects" store="$H/.claude-shared/memory"
+  local al="$H/.claude-accounts/alice/projects" bo="$H/.claude-accounts/bob/projects"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com" tree
+  set_cswap absent
+  mkdir -p "$seedp/$pa/memory" "$seedp/$pb/memory" "$al/$pa" "$al/$pb" "$bo/$pa"
+  printf '# memory a\n' > "$seedp/$pa/memory/MEMORY.md"; printf '# memory b\n' > "$seedp/$pb/memory/MEMORY.md"
+  ln -s "$seedp/$pa/memory" "$al/$pa/memory"; ln -s "$seedp/$pb/memory" "$al/$pb/memory"   # what v1.4 made
+  ln -s "$seedp/$pa/memory" "$bo/$pa/memory"
+  tree=$( cd "$H" && find . ! -path './bin*' | sort )
+  stamp
+  run_script "ACCOUNT_ROWS=$rows" -- setup --dry-run
+  assert_rc "setup --dry-run" 0
+  out_line "dry-run: would move" "  [dry-run] would move $seedp/$pa/memory to $store/$pa"
+  out_line "dry-run: would link ~/.claude to the store" "  [dry-run] would link $seedp/$pa/memory -> $store/$pa"
+  out_line "dry-run: would repoint alice's link" "  [dry-run] would repoint $al/$pa/memory -> $store/$pa (was $seedp/$pa/memory)"
+  out_line "dry-run: would link bob's missing repo-b" "  [dry-run] would link $bo/$pb/memory -> $store/$pb"
+  assert_eq "dry-run: no '  + ' change lines" "0" "$(count_matches "$T/out" '^  \+ ')"
+  assert_eq "dry-run: same file tree" "$tree" "$( cd "$H" && find . ! -path './bin*' | sort )"
+  assert_eq "dry-run: nothing modified" "" "$(newer_than "$T/stamp")"
+  assert_dir "dry-run: the folder is still in ~/.claude" "$seedp/$pa/memory"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  assert_link_to "~/.claude repo-a links to the store" "$seedp/$pa/memory" "$store/$pa"
+  assert_link_to "alice repo-a: repointed straight to the store" "$al/$pa/memory" "$store/$pa"
+  assert_link_to "alice repo-b: repointed straight to the store" "$al/$pb/memory" "$store/$pb"
+  assert_link_to "bob repo-a: repointed straight to the store" "$bo/$pa/memory" "$store/$pa"
+  assert_link_to "bob repo-b: linked" "$bo/$pb/memory" "$store/$pb"
+  out_line "the repoint names the old target" "  + repoint $al/$pa/memory -> $store/$pa (was $seedp/$pa/memory)"
+  assert_file_has "the memory reads the same through alice" "$al/$pa/memory/MEMORY.md" '# memory a'
+  assert_file_has "the memory reads the same through ~/.claude" "$seedp/$pb/memory/MEMORY.md" '# memory b'
+  assert_eq "no account link goes through ~/.claude any more" "" \
+    "$(find "$H/.claude-accounts" -name memory -type l -exec readlink {} \; | grep -F "$H/.claude/" || true)"
+  run_script -- status
+  out_line "status: both repos shared" "memory: 2 shared, 0 still in ~/.claude, 0 conflicts"
+  # idempotent: setup and --relink again change nothing
+  stamp
+  run_script -- setup
+  assert_rc "second setup" 0
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup modified nothing" "" "$(newer_than "$T/stamp")"
+  run_script -- --relink
+  assert_rc "--relink" 0
+  out_line "--relink says No changes" "No changes — everything was already in place."
+  assert_eq "--relink modified nothing" "" "$(newer_than "$T/stamp")"
+  assert_file_empty "no warning anywhere" "$T/err"
+}
+
+case_T30() { # a machine where one project was moved by hand: ~/.claude and the accounts already link to the store
+  local pa="-Users-x-repo-a" pb="-Users-x-repo-b" seedp="$H/.claude/projects" store="$H/.claude-shared/memory"
+  local al="$H/.claude-accounts/alice/projects" bo="$H/.claude-accounts/bob/projects"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com" im
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup before any repo has memory" 0
+  mkdir -p "$store/$pa" "$seedp/$pa" "$al/$pa" "$bo/$pa"; chmod 700 "$al/$pa" "$bo/$pa"
+  printf '# by hand\n' > "$store/$pa/MEMORY.md"
+  ln -s "$store/$pa" "$seedp/$pa/memory"; ln -s "$store/$pa" "$al/$pa/memory"; ln -s "$store/$pa" "$bo/$pa/memory"
+  # a second project whose ~/.claude link is spelled differently (trailing slash) but lands on the same folder
+  mkdir -p "$store/$pb" "$seedp/$pb" "$al/$pb" "$bo/$pb"; chmod 700 "$al/$pb" "$bo/$pb"
+  ln -s "$store/$pb/" "$seedp/$pb/memory"; ln -s "$store/$pb" "$al/$pb/memory"; ln -s "$store/$pb" "$bo/$pb/memory"
+  im=$(inode_of "$store/$pa")
+  stamp
+  run_script -- setup
+  assert_rc "setup on the hand-migrated machine" 0
+  out_line "setup says No changes" "No changes — everything was already in place."
+  run_script -- --relink
+  assert_rc "--relink on the hand-migrated machine" 0
+  out_line "--relink says No changes" "No changes — everything was already in place."
+  assert_eq "nothing modified" "" "$(newer_than "$T/stamp")"
+  assert_eq "the store folder is the same folder" "$im" "$(inode_of "$store/$pa")"
+  assert_link_to "~/.claude link as made by hand" "$seedp/$pa/memory" "$store/$pa"
+  assert_link_to "alice link as made by hand" "$al/$pa/memory" "$store/$pa"
+  assert_file_empty "no warning" "$T/err"
+  run_script -- status
+  assert_link_to "a link spelled another way is left as it is" "$seedp/$pb/memory" "$store/$pb/"
+  out_line "status counts both as shared" "memory: 2 shared, 0 still in ~/.claude, 0 conflicts"
+}
+
+case_T31() { # §16.3 the two memory allow rules: the shared file, the account copies, a modified copy, --relink, no jq/python3
+  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/bob/settings.json"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  assert_file_has "shared: writes through an account's memory path are allowed" "$sh" "\"$MEM_RULE_ACCT\""
+  assert_file_has "shared: writes into the store are allowed" "$sh" "\"$MEM_RULE_STORE\""
+  assert_eq "shared: appended after the seeded rule" "[\"Bash(ls:*)\",\"$MEM_RULE_ACCT\",\"$MEM_RULE_STORE\"]" "$(jq -c '.permissions.allow' "$sh")"
+  assert_eq "shared: every other key as seeded, in order" "$(jq -c 'del(.permissions)' "$H/.claude/settings.json")" "$(jq -c 'del(.permissions)' "$sh")"
+  assert_mode "shared settings.json is mode 600" "$sh" "-rw-------"
+  out_has "the change is reported" "allow memory writes in $sh"
+  assert_file_has "alice's own settings.json carries the account-path rule" "$a" "\"$MEM_RULE_ACCT\""
+  assert_file_has "alice's own settings.json carries the store rule" "$a" "\"$MEM_RULE_STORE\""
+  assert_same_file "the seed in ~/.claude is not edited" "$FIX/seed-settings.json" "$H/.claude/settings.json"
+  stamp
+  run_script -- setup
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup wrote nothing" "" "$(newer_than "$T/stamp")"
+  assert_eq "each rule is there once" "1 1" "$(grep -cF "\"$MEM_RULE_ACCT\"" "$sh") $(grep -cF "\"$MEM_RULE_STORE\"" "$sh")"
+  # a shared file that has one of the two gains only the other; --relink delivers it to the accounts too
+  printf '{"permissions": {"allow": ["%s", "Bash(z:*)"]}, "model": "opus"}\n' "$MEM_RULE_STORE" > "$sh"
+  run_script -- --relink
+  assert_rc "--relink" 0
+  assert_eq "only the missing rule is added, at the end" "[\"$MEM_RULE_STORE\",\"Bash(z:*)\",\"$MEM_RULE_ACCT\"]" "$(jq -c '.permissions.allow' "$sh")"
+  assert_file_has "the user's other key survives" "$sh" '"model": "opus"'
+  assert_file_has "--relink carried the rule into alice's own settings.json" "$a" "\"$MEM_RULE_ACCT\""
+  assert_file_has "and the user's rule with it" "$a" '"Bash(z:*)"'
+  # a copy edited inside the account is kept (§13) — and still gains the two rules, additively
+  printf '{\n  "permissions": {\n    "allow": ["Bash(x:*)"]\n  },\n  "model": "haiku"\n}\n' > "$b"
+  run_script -- setup
+  assert_rc "setup with a modified copy" 0
+  assert_eq "bob: his rule first, then the two memory rules" "[\"Bash(x:*)\",\"$MEM_RULE_ACCT\",\"$MEM_RULE_STORE\"]" "$(jq -c '.permissions.allow' "$b")"
+  assert_file_has "bob: his own key kept (not overwritten by the shared file)" "$b" '"model": "haiku"'
+  out_has "bob: the change is reported" "allow memory writes in $b"
+  err_matches "bob: still reported as modified" 'settings: bob modified since the last sync'
+  run_script -- status
+  out_line "status still counts bob as modified" "settings: 1 in sync, 0 pending, 1 modified"
+  run_script -- setup
+  out_line "the rules are added to bob once" "No changes — everything was already in place."
+  # without jq and python3 the rules cannot be merged: a warning names both, the file is untouched
+  printf '{"permissions": {"allow": ["Bash(q:*)"]}}\n' > "$sh"; cp "$sh" "$T/sh.before"
+  shadow_tools jq python3
+  run_script -- setup
+  assert_rc "setup without jq/python3" 0
+  err_has "the warning names the account-path rule" "$MEM_RULE_ACCT"
+  err_has "the warning names the store rule" "$MEM_RULE_STORE"
+  assert_same_file "the shared file is untouched without tools" "$T/sh.before" "$sh"
+  assert_rc_untouched
+}
+
 case_title() {
   case "$1" in
     T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
+    T28) printf 'memory migration table (one project per row), rollback, status counts' ;;
+    T29) printf 'upgrade from the v1.4 memory layout: dry-run, move, links repointed, idempotent' ;;
+    T30) printf 'hand-migrated machine: links already point at the store' ;;
+    T31) printf 'memory allow rules: shared file, account copies, modified copy, relink, no tools' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -1685,7 +1934,7 @@ case_title() {
     T9) printf 'second run is a no-op' ;;
     T10) printf '5th account added in cswap' ;;
     T11) printf '%s' '--relink after deleting one link' ;;
-    T12) printf 'per-repo memory links' ;;
+    T12) printf 'per-repo memory: the store in ~/.claude-shared, links from ~/.claude and every account' ;;
     T13) printf '%s' '--rc twice (zsh), bash, --rc=FILE' ;;
     T14) printf 'aliases.sh sourced in zsh and bash' ;;
     T15) printf 'remove b@y.test' ;;
@@ -1732,8 +1981,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-7]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T27)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-9] | T3[01]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T31)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES
