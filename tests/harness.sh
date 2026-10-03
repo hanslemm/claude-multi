@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
+# + §16.9 (T12 rewritten, T28–T32)
 # for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
@@ -36,7 +37,10 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31 T32"
+# §16.3: the two allow rules every settings file gains, so a memory write is pre-approved on both paths
+MEM_RULE_ACCT='Edit(~/.claude-accounts/*/projects/*/memory/**)'
+MEM_RULE_STORE='Edit(~/.claude-shared/memory/**)'
 
 TOTAL_OK=0
 TOTAL_FAIL=0
@@ -193,9 +197,9 @@ EOF
   "active": 1,
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.", "active": true},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH", "active": false},
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH", "active": false},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.", "active": false},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal", "active": false}
+    {"number": 4, "email": "hans@mail.test", "organization": "personal", "active": false}
   ]
 }
 EOF
@@ -205,9 +209,9 @@ EOF
   "active": 1,
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.", "active": true},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH", "active": false},
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH", "active": false},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.", "active": false},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal", "active": false},
+    {"number": 4, "email": "hans@mail.test", "organization": "personal", "active": false},
     {"number": 5, "email": "alice@other.test", "organization": "Other Org", "active": false}
   ]
 }
@@ -219,11 +223,11 @@ EOF
   "accounts": [
     {"number": 1, "email": "alice@example.com", "organization": "Alice's Coffee Co.",
      "accessToken": "sk-ant-oat01-FAKETOKEN-alice", "refreshToken": "sk-ant-ort01-FAKETOKEN-alice"},
-    {"number": 2, "email": "hans@betterdoc.test", "organization": "BetterDoc GmbH",
+    {"number": 2, "email": "hans@acme.test", "organization": "Acme GmbH",
      "accessToken": "sk-ant-oat01-FAKETOKEN-hans1", "refreshToken": "sk-ant-ort01-FAKETOKEN-hans1"},
     {"number": 3, "email": "info@corp.test", "organization": "Corp Inc.",
      "accessToken": "sk-ant-oat01-FAKETOKEN-info", "refreshToken": "sk-ant-ort01-FAKETOKEN-info"},
-    {"number": 4, "email": "hans@proton.test", "organization": "personal",
+    {"number": 4, "email": "hans@mail.test", "organization": "personal",
      "accessToken": "sk-ant-oat01-FAKETOKEN-hans2", "refreshToken": "sk-ant-ort01-FAKETOKEN-hans2"}
   ]
 }
@@ -233,9 +237,9 @@ EOF
   cat > "$FIX/cswap-list.ansi.tpl" <<'EOF'
 <ESC>[1;36mClaude Code accounts<ESC>[0m
 <ESC>[32m  1: alice@example.com<ESC>[0m  <ESC>[2m[Alice's Coffee Co.]<ESC>[0m  <ESC>[33m(active)<ESC>[0m
-  2: hans@betterdoc.test  <ESC>[2m[BetterDoc GmbH]<ESC>[0m
+  2: hans@acme.test  <ESC>[2m[Acme GmbH]<ESC>[0m
   3: info@corp.test  <ESC>[2m[Corp Inc.]<ESC>[0m
-  4: hans@proton.test  <ESC>[2m[personal]<ESC>[0m
+  4: hans@mail.test  <ESC>[2m[personal]<ESC>[0m
 <ESC>[2mUse 'cswap use <n>' to switch the default account.<ESC>[0m
 EOF
   awk -v esc='\033' '{ gsub(/<ESC>/, esc); print }' "$FIX/cswap-list.ansi.tpl" > "$FIX/cswap-list.ansi"
@@ -281,12 +285,12 @@ cwho > "$P/cwho-unpinned.out" 2> "$P/cwho-unpinned.err"; echo $? > "$P/cwho-unpi
 cuse > "$P/cuse-noarg.out" 2> "$P/cuse-noarg.err"; echo $? > "$P/cuse-noarg.rc"
 cuse nonexistent > "$P/cuse-missing.out" 2> "$P/cuse-missing.err"; echo $? > "$P/cuse-missing.rc"
 cfg cuse-missing
-cuse hans-proton > "$P/cuse-slug.out" 2> "$P/cuse-slug.err"; echo $? > "$P/cuse-slug.rc"
+cuse hans-mail > "$P/cuse-slug.out" 2> "$P/cuse-slug.err"; echo $? > "$P/cuse-slug.rc"
 cfg cuse-slug
 cwho > "$P/cwho-pinned.out" 2> "$P/cwho-pinned.err"; echo $? > "$P/cwho-pinned.rc"
 cuse 1 > "$P/cuse-slot.out" 2> "$P/cuse-slot.err"; echo $? > "$P/cuse-slot.rc"
 cfg cuse-slot
-claude-hans-betterdoc --print hello > "$P/launcher-fn.out" 2> "$P/launcher-fn.err"; echo $? > "$P/launcher-fn.rc"
+claude-hans-acme --print hello > "$P/launcher-fn.out" 2> "$P/launcher-fn.err"; echo $? > "$P/launcher-fn.rc"
 cfg launcher-fn; key launcher-fn
 eval 'claude3 mcp list' > "$P/launcher-alias.out" 2> "$P/launcher-alias.err"; echo $? > "$P/launcher-alias.rc"
 ( PATH=/usr/bin:/bin; claude-alice ) > "$P/launcher-nobin.out" 2>&1; echo $? > "$P/launcher-nobin.rc"
@@ -323,7 +327,7 @@ claude-multi status > "$P/status.out" 2> "$P/status.err"; echo $? > "$P/status.r
 "$HOME/.claude-multi/claude-multi-setup.sh" status > "$P/status-direct.out" 2> "$P/status-direct.err"
 claude-multi use default > "$P/default.out" 2> "$P/default.err"; echo $? > "$P/default.rc"
 cfg default; acct default; exported default
-cuse hans-proton > "$P/cuse.out" 2>&1; echo $? > "$P/cuse.rc"
+cuse hans-mail > "$P/cuse.out" 2>&1; echo $? > "$P/cuse.rc"
 acct cuse; exported cuse
 cuse default > /dev/null 2>&1
 acct cuse-default; cfg cuse-default
@@ -450,28 +454,33 @@ assert_aliases_parse() {
 assert_four_accounts() { # the T1–T4 result
   assert_rc "setup" 0
   assert_account_dir alice
-  assert_account_dir hans-betterdoc
+  assert_account_dir hans-acme
   assert_account_dir info
-  assert_account_dir hans-proton
+  assert_account_dir hans-mail
   assert_eq "exactly 4 account dirs" "4" "$(find "$H/.claude-accounts" -mindepth 1 -maxdepth 1 2>/dev/null | grep -c .)"
   assert_first_line "accounts.tsv v2 header" "$H/.claude-multi/accounts.tsv" \
     '# claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.'
   assert_registry_row 1 alice@example.com alice
-  assert_registry_row 2 hans@betterdoc.test hans-betterdoc
+  assert_registry_row 2 hans@acme.test hans-acme
   assert_registry_row 3 info@corp.test info
-  assert_registry_row 4 hans@proton.test hans-proton
+  assert_registry_row 4 hans@mail.test hans-mail
   assert_eq "accounts.tsv has 4 rows" "4" "$(registry_rows)"
   assert_aliases_parse
   assert_seed_untouched
   assert_rc_untouched
   out_matches "summary: alice line" '^  1 +claude-alice +alice@example.com +'"$H"'/\.claude-accounts/alice$'
-  out_matches "summary: login hint for hans-proton" '^  claude-multi login hans-proton +\(hans@proton\.test\)'
+  out_matches "summary: login hint for hans-mail" '^  claude-multi login hans-mail +\(hans@mail\.test\)'
   out_has "summary: Shared config line" "Shared config: "
   out_has "summary: Aliases line" "Aliases: "
   out_has "summary: rc file line" "rc file: "
 }
 assert_shared_seeded() {
-  assert_same_file "shared settings.json byte-identical to seed" "$H/.claude/settings.json" "$H/.claude-shared/settings.json"
+  assert_file_has "shared settings.json carries the seed's allow rule" "$H/.claude-shared/settings.json" '"Bash(ls:*)"'
+  if command -v jq >/dev/null 2>&1; then   # §16.3: the seed, plus the two memory rules at the end of permissions.allow — key order kept
+    assert_eq "shared settings.json = the seed + the two memory allow rules, nothing else disturbed" \
+      "$(jq -c --arg a "$MEM_RULE_ACCT" --arg b "$MEM_RULE_STORE" '.permissions.allow += [$a, $b]' "$H/.claude/settings.json" 2>/dev/null)" \
+      "$(jq -c . "$H/.claude-shared/settings.json" 2>/dev/null)"
+  fi
   assert_dir "shared skills is a real copied dir" "$H/.claude-shared/skills"
   assert_same_file "shared skills/demo/SKILL.md copied" "$H/.claude/skills/demo/SKILL.md" "$H/.claude-shared/skills/demo/SKILL.md"
   assert_same_file "shared commands/hi.md copied" "$H/.claude/commands/hi.md" "$H/.claude-shared/commands/hi.md"
@@ -619,16 +628,16 @@ case_T10() { # a 5th account appears in cswap
   set_cswap json
   run_script -- setup
   assert_rc "first run" 0
-  i1=$(inode_of "$H/.claude-accounts/alice"); i2=$(inode_of "$H/.claude-accounts/hans-betterdoc")
-  i3=$(inode_of "$H/.claude-accounts/info");  i4=$(inode_of "$H/.claude-accounts/hans-proton")
+  i1=$(inode_of "$H/.claude-accounts/alice"); i2=$(inode_of "$H/.claude-accounts/hans-acme")
+  i3=$(inode_of "$H/.claude-accounts/info");  i4=$(inode_of "$H/.claude-accounts/hans-mail")
   rows=$(registry_rows)
   set_cswap json5
   run_script -- setup
   assert_rc "second run with 5 accounts" 0
   assert_eq "alice dir same inode" "$i1" "$(inode_of "$H/.claude-accounts/alice")"
-  assert_eq "hans-betterdoc dir same inode" "$i2" "$(inode_of "$H/.claude-accounts/hans-betterdoc")"
+  assert_eq "hans-acme dir same inode" "$i2" "$(inode_of "$H/.claude-accounts/hans-acme")"
   assert_eq "info dir same inode" "$i3" "$(inode_of "$H/.claude-accounts/info")"
-  assert_eq "hans-proton dir same inode" "$i4" "$(inode_of "$H/.claude-accounts/hans-proton")"
+  assert_eq "hans-mail dir same inode" "$i4" "$(inode_of "$H/.claude-accounts/hans-mail")"
   assert_account_dir alice-other
   assert_registry_row 5 alice@other.test alice-other
   assert_eq "registry gained exactly one row" "$((rows + 1))" "$(registry_rows)"
@@ -652,36 +661,63 @@ case_T11() { # --relink after deleting one link
   assert_eq "aliases.sh not regenerated" "" "$(find "$H/.claude-multi/aliases.sh" -newer "$T/stamp" 2>/dev/null)"
 }
 
-case_T12() { # per-repo memory links
+case_T12() { # per-repo memory (§16): the folder lives in ~/.claude-shared/memory/<p>; ~/.claude and every account link to it
   local pa="-Users-x-repo-a" pb="-Users-x-repo-b" pc="-Users-x-repo-c" pd="-Users-x-repo-d"
+  local store="$H/.claude-shared/memory" seedp="$H/.claude/projects" ia tree
   set_cswap absent
-  mkdir -p "$H/.claude/projects/$pa/memory" "$H/.claude/projects/$pb/memory" "$H/.claude/projects/$pc"
-  printf '# memory a\n' > "$H/.claude/projects/$pa/memory/MEMORY.md"
-  printf '{}\n' > "$H/.claude/projects/$pc/session.jsonl"
-  snapshot_seed; touch "$T/stamp-seed"
+  mkdir -p "$seedp/$pa/memory" "$seedp/$pb/memory" "$seedp/$pc"
+  printf '# memory a\n' > "$seedp/$pa/memory/MEMORY.md"
+  printf '{}\n' > "$seedp/$pc/session.jsonl"
+  cp "$seedp/$pa/memory/MEMORY.md" "$T/memory-a.before"
+  ia=$(inode_of "$seedp/$pa/memory")
+  tree=$( cd "$H" && find .claude .claude.json ! -path '*/memory' ! -path '*/memory/*' | sort )
   mkdir -p "$H/.claude-accounts/alice/projects/$pa/memory"          # alice: EMPTY real dir → replaced
   mkdir -p "$H/.claude-accounts/bob/projects/$pa/memory"            # bob: non-empty real dir → warned, kept
   printf 'bob notes\n' > "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md"
   cp "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md" "$T/bob-notes.before"
   run_script "ACCOUNT_ROWS=1${TAB}alice@example.com${NL}2${TAB}bob@example.com" -- setup
   assert_rc "setup (warnings are not errors)" 0
-  assert_link_to "alice repo-a: empty dir replaced by link" "$H/.claude-accounts/alice/projects/$pa/memory" "$H/.claude/projects/$pa/memory"
+  # the folder leaves ~/.claude: moved (not copied) into the store, a link stays behind
+  assert_dir "repo-a: the real folder is in the store" "$store/$pa"
+  assert_eq "repo-a: moved, not copied (same inode)" "$ia" "$(inode_of "$store/$pa")"
+  assert_same_file "repo-a: MEMORY.md intact in the store" "$T/memory-a.before" "$store/$pa/MEMORY.md"
+  assert_link_to "repo-a: ~/.claude keeps a link to the store" "$seedp/$pa/memory" "$store/$pa"
+  assert_same_file "repo-a: MEMORY.md readable through ~/.claude" "$T/memory-a.before" "$seedp/$pa/memory/MEMORY.md"
+  out_line "change line: the move" "  + move $seedp/$pa/memory to $store/$pa"
+  out_line "change line: the link left behind" "  + link $seedp/$pa/memory -> $store/$pa"
+  assert_dir "repo-b (empty memory dir in ~/.claude): moved too" "$store/$pb"
+  assert_link_to "repo-b: ~/.claude links to the store" "$seedp/$pb/memory" "$store/$pb"
+  assert_absent "repo-c (no memory dir): nothing in the store" "$store/$pc"
+  assert_absent "repo-c: no memory link made in ~/.claude" "$seedp/$pc/memory"
+  assert_mode "the store is mode 700" "$store" "drwx------"
+  assert_eq "nothing else under ~/.claude added or removed" "$tree" "$( cd "$H" && find .claude .claude.json ! -path '*/memory' ! -path '*/memory/*' | sort )"
+  assert_same_file "~/.claude.json byte-identical" "$T/claude.json.seed" "$H/.claude.json"
+  assert_same_file "~/.claude/settings.json byte-identical" "$FIX/seed-settings.json" "$H/.claude/settings.json"
+  # every account links straight to the store: one hop, never through ~/.claude
+  assert_link_to "alice repo-a: empty dir replaced by a link to the store" "$H/.claude-accounts/alice/projects/$pa/memory" "$store/$pa"
   out_has "change line says 'replace empty dir'" "replace empty dir"
   assert_dir "bob repo-a: non-empty dir left alone" "$H/.claude-accounts/bob/projects/$pa/memory"
   assert_same_file "bob's NOTES.md intact" "$T/bob-notes.before" "$H/.claude-accounts/bob/projects/$pa/memory/NOTES.md"
   err_has "warning names bob's path" "$H/.claude-accounts/bob/projects/$pa/memory"
   err_has "warning says left alone" "left alone"
-  assert_link_to "alice repo-b (empty memory dir in ~/.claude) linked" "$H/.claude-accounts/alice/projects/$pb/memory" "$H/.claude/projects/$pb/memory"
+  err_has "warning names the shared folder his files belong in" "$store/$pa"
+  assert_file_lacks "warning does not suggest hiding his notes in a .unshared folder" "$T/err" "memory.unshared"
+  assert_link_to "alice repo-b linked to the store" "$H/.claude-accounts/alice/projects/$pb/memory" "$store/$pb"
+  assert_link_to "bob repo-b linked to the store" "$H/.claude-accounts/bob/projects/$pb/memory" "$store/$pb"
   assert_absent "repo-c (no memory dir) skipped for alice" "$H/.claude-accounts/alice/projects/$pc"
   assert_absent "repo-c skipped for bob" "$H/.claude-accounts/bob/projects/$pc"
   assert_mode "alice/projects/repo-b is mode 700" "$H/.claude-accounts/alice/projects/$pb" "drwx------"
-  assert_seed_untouched
-  # a repo that gains memory later is picked up by --relink
-  mkdir -p "$H/.claude/projects/$pd/memory"; printf '# memory d\n' > "$H/.claude/projects/$pd/memory/MEMORY.md"
+  out_has "summary: Shared memory names the store" "Shared memory: $store/<repo>"
+  run_script -- status
+  out_line "status: bob's own folder next to the shared one counts as a conflict" "memory: 1 shared, 0 still in ~/.claude, 0 in one account, 1 conflicts"
+  # a repo that gains memory later is picked up by --relink: moved, then linked everywhere
+  mkdir -p "$seedp/$pd/memory"; printf '# memory d\n' > "$seedp/$pd/memory/MEMORY.md"
   run_script -- --relink
   assert_rc "--relink" 0
-  assert_link_to "alice repo-d linked by --relink" "$H/.claude-accounts/alice/projects/$pd/memory" "$H/.claude/projects/$pd/memory"
-  assert_link_to "bob repo-d linked by --relink" "$H/.claude-accounts/bob/projects/$pd/memory" "$H/.claude/projects/$pd/memory"
+  assert_file_has "repo-d moved into the store by --relink" "$store/$pd/MEMORY.md" '# memory d'
+  assert_link_to "repo-d: ~/.claude links to the store" "$seedp/$pd/memory" "$store/$pd"
+  assert_link_to "alice repo-d linked by --relink" "$H/.claude-accounts/alice/projects/$pd/memory" "$store/$pd"
+  assert_link_to "bob repo-d linked by --relink" "$H/.claude-accounts/bob/projects/$pd/memory" "$store/$pd"
   assert_mode "alice/projects/repo-d is mode 700" "$H/.claude-accounts/alice/projects/$pd" "drwx------"
   assert_dir "bob repo-a still a real dir after --relink" "$H/.claude-accounts/bob/projects/$pa/memory"
 }
@@ -758,8 +794,8 @@ t14_assert_shell() { # label
   assert_file_line "[$L] cwho list header" "$P/cwho-unpinned.out" "Accounts (slot · launcher · email · login):"
   assert_eq "[$L] cwho unpinned: no * mark" "0" "$(count_matches "$P/cwho-unpinned.out" '^  \* ')"
   assert_file_matches "[$L] cwho lists alice as logged in" "$P/cwho-unpinned.out" '^  [ *] 1 +claude-alice +alice@example\.com +logged in$'
-  assert_file_matches "[$L] cwho lists hans-proton as NOT logged in" "$P/cwho-unpinned.out" '^  [ *] 4 +claude-hans-proton +hans@proton\.test +NOT logged in '
-  assert_file_has "[$L] NOT logged in wording" "$P/cwho-unpinned.out" "NOT logged in → run claude-multi login hans-proton"
+  assert_file_matches "[$L] cwho lists hans-mail as NOT logged in" "$P/cwho-unpinned.out" '^  [ *] 4 +claude-hans-mail +hans@mail\.test +NOT logged in '
+  assert_file_has "[$L] NOT logged in wording" "$P/cwho-unpinned.out" "NOT logged in → run claude-multi login hans-mail"
   # cuse: no argument, unknown
   assert_eq "[$L] cuse without argument exits 2" "2" "$(cat "$P/cuse-noarg.rc" 2>/dev/null)"
   assert_file_empty "[$L] cuse without argument: stdout empty" "$P/cuse-noarg.out"
@@ -770,13 +806,13 @@ t14_assert_shell() { # label
   assert_file_has "[$L] cuse nonexistent: list on stderr" "$P/cuse-missing.err" "Accounts (slot"
   assert_eq "[$L] cuse nonexistent leaves CLAUDE_CONFIG_DIR unset" "<unset>" "$(cat "$P/cuse-missing.cfg" 2>/dev/null)"
   # cuse by slug
-  assert_eq "[$L] cuse hans-proton exits 0" "0" "$(cat "$P/cuse-slug.rc" 2>/dev/null)"
-  assert_first_line "[$L] cuse hans-proton line" "$P/cuse-slug.out" "This terminal: hans-proton (hans@proton.test)  CLAUDE_CONFIG_DIR=$acc/hans-proton"
-  assert_file_line "[$L] cuse hans-proton: not-logged-in hint" "$P/cuse-slug.out" "  not logged in yet: run  claude-multi login hans-proton"
+  assert_eq "[$L] cuse hans-mail exits 0" "0" "$(cat "$P/cuse-slug.rc" 2>/dev/null)"
+  assert_first_line "[$L] cuse hans-mail line" "$P/cuse-slug.out" "This terminal: hans-mail (hans@mail.test)  CLAUDE_CONFIG_DIR=$acc/hans-mail"
+  assert_file_line "[$L] cuse hans-mail: not-logged-in hint" "$P/cuse-slug.out" "  not logged in yet: run  claude-multi login hans-mail"
   assert_file_has "[$L] cuse notes ANTHROPIC_API_KEY" "$P/cuse-slug.out" "ANTHROPIC_API_KEY"
-  assert_eq "[$L] cuse exported CLAUDE_CONFIG_DIR" "$acc/hans-proton" "$(cat "$P/cuse-slug.cfg" 2>/dev/null)"
-  assert_first_line "[$L] cwho pinned first line" "$P/cwho-pinned.out" "This terminal: hans-proton (hans@proton.test)  CLAUDE_CONFIG_DIR=$acc/hans-proton"
-  assert_file_matches "[$L] cwho pinned marks slot 4" "$P/cwho-pinned.out" '^  \* 4 +claude-hans-proton +hans@proton\.test'
+  assert_eq "[$L] cuse exported CLAUDE_CONFIG_DIR" "$acc/hans-mail" "$(cat "$P/cuse-slug.cfg" 2>/dev/null)"
+  assert_first_line "[$L] cwho pinned first line" "$P/cwho-pinned.out" "This terminal: hans-mail (hans@mail.test)  CLAUDE_CONFIG_DIR=$acc/hans-mail"
+  assert_file_matches "[$L] cwho pinned marks slot 4" "$P/cwho-pinned.out" '^  \* 4 +claude-hans-mail +hans@mail\.test'
   assert_eq "[$L] cwho pinned: exactly one * mark" "1" "$(count_matches "$P/cwho-pinned.out" '^  \* ')"
   # cuse by slot (alice is logged in)
   assert_eq "[$L] cuse 1 exits 0" "0" "$(cat "$P/cuse-slot.rc" 2>/dev/null)"
@@ -784,9 +820,9 @@ t14_assert_shell() { # label
   assert_file_lacks "[$L] cuse 1: no not-logged-in hint for a logged-in account" "$P/cuse-slot.out" "not logged in"
   assert_eq "[$L] cuse 1 exported CLAUDE_CONFIG_DIR" "$acc/alice" "$(cat "$P/cuse-slot.cfg" 2>/dev/null)"
   # launcher by function
-  assert_eq "[$L] claude-hans-betterdoc exits 0" "0" "$(cat "$P/launcher-fn.rc" 2>/dev/null)"
+  assert_eq "[$L] claude-hans-acme exits 0" "0" "$(cat "$P/launcher-fn.rc" 2>/dev/null)"
   assert_first_line "[$L] launcher: config dir, KEY=<unset>, flag order, args" "$P/launcher-fn.out" \
-    "stub claude CLAUDE_CONFIG_DIR=$acc/hans-betterdoc KEY=<unset> ARGS=--mcp-config $shared/mcp.json --settings $shared/settings.json --print hello"
+    "stub claude CLAUDE_CONFIG_DIR=$acc/hans-acme KEY=<unset> ARGS=--mcp-config $shared/mcp.json --settings $shared/settings.json --print hello"
   assert_eq "[$L] shell CLAUDE_CONFIG_DIR unchanged by the launcher" "$acc/alice" "$(cat "$P/launcher-fn.cfg" 2>/dev/null)"
   assert_eq "[$L] shell ANTHROPIC_API_KEY unchanged by the launcher" "sk-ant-LEAK" "$(cat "$P/launcher-fn.key" 2>/dev/null)"
   assert_file_line "[$L] launcher: AUTH_TOKEN and OAUTH_TOKEN unset too" "$P/launcher-fn.out" "stub env AUTH_TOKEN=<unset> OAUTH=<unset>"
@@ -799,10 +835,10 @@ t14_assert_shell() { # label
   assert_eq "[$L] launcher with a missing account dir exits 1" "1" "$(cat "$P/launcher-nodir.rc" 2>/dev/null)"
   assert_file_has "[$L] missing-dir error names the setup script" "$P/launcher-nodir.out" "claude-multi-setup.sh"
   # lookups
-  assert_first_line "[$L] _claude_multi_find by slot" "$P/find-slot.out" "4 hans-proton hans@proton.test"
+  assert_first_line "[$L] _claude_multi_find by slot" "$P/find-slot.out" "4 hans-mail hans@mail.test"
   assert_first_line "[$L] _claude_multi_find by slug" "$P/find-slug.out" "1 alice alice@example.com"
   assert_file_empty "[$L] _claude_multi_find unknown prints nothing" "$P/find-none.out"
-  assert_eq "[$L] _claude_multi_accounts prints 4 lines in slot order" "1 alice alice@example.com|2 hans-betterdoc hans@betterdoc.test|3 info info@corp.test|4 hans-proton hans@proton.test|" \
+  assert_eq "[$L] _claude_multi_accounts prints 4 lines in slot order" "1 alice alice@example.com|2 hans-acme hans@acme.test|3 info info@corp.test|4 hans-mail hans@mail.test|" \
     "$(tr '\n' '|' < "$P/accounts.out" 2>/dev/null)"
   # cuse default
   assert_eq "[$L] cuse default exits 0" "0" "$(cat "$P/cuse-default.rc" 2>/dev/null)"
@@ -865,12 +901,12 @@ case_T15() { # remove b@y.test
   set_cswap json
   run_script -- setup
   assert_rc "setup with cswap" 0
-  assert_registry_row 4 hans@proton.test hans-proton
-  run_script -- remove hans@proton.test
-  assert_rc "remove hans@proton.test" 0
-  assert_file_lacks "registry row for hans@proton.test gone" "$H/.claude-multi/accounts.tsv" "hans@proton.test"
-  out_has "remove notes cswap still lists it" "cswap still lists hans@proton.test"
-  assert_dir "dir hans-proton still exists" "$H/.claude-accounts/hans-proton"
+  assert_registry_row 4 hans@mail.test hans-mail
+  run_script -- remove hans@mail.test
+  assert_rc "remove hans@mail.test" 0
+  assert_file_lacks "registry row for hans@mail.test gone" "$H/.claude-multi/accounts.tsv" "hans@mail.test"
+  out_has "remove notes cswap still lists it" "cswap still lists hans@mail.test"
+  assert_dir "dir hans-mail still exists" "$H/.claude-accounts/hans-mail"
 }
 
 case_T16() { # status before setup, after setup, after a fake login, pinned, unmanaged
@@ -880,8 +916,9 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   assert_rc "status on a fresh HOME" 0
   assert_file_empty "status prints nothing on stderr" "$T/err"
   order_fresh=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins rc terminal next " "$order_fresh"
+  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins memory rc terminal next " "$order_fresh"
   out_line "plugins: nothing registered yet" "plugins: 0 shared, 0 own, 0 pending"
+  out_line "memory: no repo has memory yet" "memory: 0 shared, 0 still in ~/.claude, 0 in one account, 0 conflicts"
   out_line "cswap found" "cswap: found at $H/bin/cswap"
   out_line "shared missing" "shared: missing"
   out_line "aliases missing" "aliases: missing"
@@ -896,7 +933,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   run_script -- status
   assert_rc "status after setup" 0
   order_setup=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order_setup"
+  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order_setup"
   out_line "plugins: every account linked" "plugins: 4 shared, 0 own, 0 pending"
   assert_true "script: names an existing file" test -f "$(sed -n 's/^script: //p' "$T/out")"
   out_matches "version: has a value" '^version: [^ ]'
@@ -905,9 +942,9 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   out_line "rc not sourced" "rc: not sourced (run --rc)"
   out_line "terminal default" "terminal: default"
   out_line "account 1" "account: 1 alice alice@example.com not-logged-in"
-  out_line "account 2" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in"
+  out_line "account 2" "account: 2 hans-acme hans@acme.test not-logged-in"
   out_line "account 3" "account: 3 info info@corp.test not-logged-in"
-  out_line "account 4" "account: 4 hans-proton hans@proton.test not-logged-in"
+  out_line "account 4" "account: 4 hans-mail hans@mail.test not-logged-in"
   out_has "next: first not-logged-in account" "next: run claude-multi login alice"
   next1=$(sed -n 's/^next: //p' "$T/out")
   printf '{"oauthAccount":{}}\n' 2>/dev/null > "$H/.claude-accounts/alice/.claude.json"
@@ -917,7 +954,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   out_line "account 1 now logged-in" "account: 1 alice alice@example.com logged-in"
   next2=$(sed -n 's/^next: //p' "$T/out")
   assert_ne "next: changed after the login" "$next1" "$next2"
-  out_has "next: now names hans-betterdoc" "claude-multi login hans-betterdoc"
+  out_has "next: now names hans-acme" "claude-multi login hans-acme"
   run_script "CLAUDE_CONFIG_DIR=$H/.claude-accounts/info" -- status
   out_line "terminal pinned" "terminal: info (info@corp.test)"
   run_script "CLAUDE_CONFIG_DIR=/tmp/elsewhere" -- status
@@ -931,7 +968,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
 case_T17() { # v1 registry + v1 aliases.zsh
   set_cswap json
   mkdir -p "$H/.claude-multi"
-  printf '# claude-multi: email<TAB>slug. A slug never changes once assigned.\nalice@example.com\tally\nhans@betterdoc.test\thansb\n' > "$H/.claude-multi/accounts.tsv"
+  printf '# claude-multi: email<TAB>slug. A slug never changes once assigned.\nalice@example.com\tally\nhans@acme.test\thansb\n' > "$H/.claude-multi/accounts.tsv"
   printf '# ~/.claude-multi/aliases.zsh — GENERATED by ~/.claude-multi/claude-multi-setup.sh. Do not edit.\nalias claude1=nothing\n' > "$H/.claude-multi/aliases.zsh"
   printf '# seeded zshrc\n\n%s\n' "$V1_RC_LINE" > "$H/.zshrc"
   cp "$H/.zshrc" "$T/zshrc.v1"
@@ -940,13 +977,13 @@ case_T17() { # v1 registry + v1 aliases.zsh
   assert_account_dir ally
   assert_account_dir hansb
   assert_account_dir info
-  assert_account_dir hans          # `hans` is free: the v1 registry maps hans@betterdoc.test to `hansb`
+  assert_account_dir hans          # `hans` is free: the v1 registry maps hans@acme.test to `hansb`
   assert_absent "no dir 'alice' (v1 slug kept)" "$H/.claude-accounts/alice"
-  assert_absent "no dir 'hans-betterdoc' (v1 slug kept)" "$H/.claude-accounts/hans-betterdoc"
+  assert_absent "no dir 'hans-acme' (v1 slug kept)" "$H/.claude-accounts/hans-acme"
   assert_registry_row 1 alice@example.com ally
-  assert_registry_row 2 hans@betterdoc.test hansb
+  assert_registry_row 2 hans@acme.test hansb
   assert_registry_row 3 info@corp.test info
-  assert_registry_row 4 hans@proton.test hans
+  assert_registry_row 4 hans@mail.test hans
   assert_first_line "accounts.tsv rewritten as v2" "$H/.claude-multi/accounts.tsv" \
     '# claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.'
   assert_exists "aliases.sh written" "$H/.claude-multi/aliases.sh"
@@ -1055,8 +1092,8 @@ t19_assert_shell() { # label
   assert_eq "[$L] use default: CLAUDE_MULTI_ACCOUNT unset" "<unset>" "$(cat "$P/default.acct" 2>/dev/null)"
   assert_eq "[$L] use default: neither variable reaches a child sh" "<unset>|<unset>" "$(cat "$P/default.exported" 2>/dev/null)"
   # cuse itself carries CLAUDE_MULTI_ACCOUNT (§12.1)
-  assert_eq "[$L] cuse hans-proton exits 0" "0" "$(cat "$P/cuse.rc" 2>/dev/null)"
-  assert_eq "[$L] cuse hans-proton exports CLAUDE_MULTI_ACCOUNT" "$acc/hans-proton|hans-proton" "$(cat "$P/cuse.exported" 2>/dev/null)"
+  assert_eq "[$L] cuse hans-mail exits 0" "0" "$(cat "$P/cuse.rc" 2>/dev/null)"
+  assert_eq "[$L] cuse hans-mail exports CLAUDE_MULTI_ACCOUNT" "$acc/hans-mail|hans-mail" "$(cat "$P/cuse.exported" 2>/dev/null)"
   assert_eq "[$L] cuse default unsets CLAUDE_MULTI_ACCOUNT" "<unset>" "$(cat "$P/cuse-default.acct" 2>/dev/null)"
   assert_eq "[$L] cuse default unsets CLAUDE_CONFIG_DIR" "<unset>" "$(cat "$P/cuse-default.cfg" 2>/dev/null)"
   assert_eq "[$L] claude-multi use nonexistent exits 1" "1" "$(cat "$P/use-missing.rc" 2>/dev/null)"
@@ -1136,11 +1173,11 @@ case_T20() { # `login` against the stub claude
   # login <slot> and login <email> resolve too
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login 4
   assert_rc "login 4" 0
-  assert_eq "login 4 resolved to hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 2)"
-  out_has "login 4 reports 'logged in as hans@proton.test'" "logged in as hans@proton.test"
-  run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login hans@proton.test
-  assert_rc "login hans@proton.test" 0
-  assert_eq "login <email> resolved to hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 3)"
+  assert_eq "login 4 resolved to hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 2)"
+  out_has "login 4 reports 'logged in as hans@mail.test'" "logged in as hans@mail.test"
+  run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login hans@mail.test
+  assert_rc "login hans@mail.test" 0
+  assert_eq "login <email> resolved to hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 3)"
   assert_eq "three logins so far" "3" "$(login_lines)"
   # unknown account
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login nonexistent
@@ -1172,21 +1209,21 @@ case_T20() { # `login` against the stub claude
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login --all
   assert_rc "login --all" 0
   assert_eq "login --all: exactly two logins" "2" "$(login_lines)"
-  assert_eq "login --all: first hans-betterdoc (slot 2)" "$(expected_login_line hans-betterdoc hans@betterdoc.test)" "$(login_line_n 1)"
-  assert_eq "login --all: then hans-proton (slot 4)" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 2)"
+  assert_eq "login --all: first hans-acme (slot 2)" "$(expected_login_line hans-acme hans@acme.test)" "$(login_line_n 1)"
+  assert_eq "login --all: then hans-mail (slot 4)" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 2)"
   assert_file_lacks "login --all skipped alice (logged in)" "$STUB_LOG" "alice@example.com"
   assert_file_lacks "login --all skipped info (logged in)" "$STUB_LOG" "info@corp.test"
-  out_has "login --all reports hans@betterdoc.test" "logged in as hans@betterdoc.test"
-  out_has "login --all reports hans@proton.test" "logged in as hans@proton.test"
+  out_has "login --all reports hans@acme.test" "logged in as hans@acme.test"
+  out_has "login --all reports hans@mail.test" "logged in as hans@mail.test"
   # --all takes the VERIFIED state: alice keeps her oauthAccount (heuristic: logged in) but loses the stub marker
-  # (verified: not) → attempted; hans-betterdoc has the marker only (heuristic: not, verified: logged in) → skipped
+  # (verified: not) → attempted; hans-acme has the marker only (heuristic: not, verified: logged in) → skipped
   rm -f "$STUB_LOG" "$acc/alice/.stub-logged-in"
   run_script "CLAUDE_MULTI_INPUT=$T/answers" -- login --all
   assert_rc "login --all (stale oauthAccount)" 0
   assert_eq "login --all: exactly one login (alice)" "1" "$(login_lines)"
   assert_eq "login --all: alice attempted despite her oauthAccount" "$(expected_login_line alice alice@example.com)" "$(login_line_n 1)"
-  out_line "login --all: hans-betterdoc skipped on its verified state" "account: 2 hans-betterdoc hans@betterdoc.test logged-in (verified)"
-  assert_file_lacks "login --all: hans-betterdoc not attempted" "$STUB_LOG" "auth login --email hans@betterdoc.test"
+  out_line "login --all: hans-acme skipped on its verified state" "account: 2 hans-acme hans@acme.test logged-in (verified)"
+  assert_file_lacks "login --all: hans-acme not attempted" "$STUB_LOG" "auth login --email hans@acme.test"
   # a failing login
   rm -f "$STUB_LOG" "$acc"/*/.stub-logged-in
   : > "$H/stub-login-fails"
@@ -1201,7 +1238,7 @@ case_T20() { # `login` against the stub claude
   assert_eq "login --all stopped at the first failure (one attempt)" "1" "$(login_lines)"
   assert_eq "login --all: the attempt was alice (slot 1; her stale oauthAccount does not skip her)" "$(expected_login_line alice alice@example.com)" "$(login_line_n 1)"
   outerr_has "login --all: 'login did not complete for alice@example.com'" "login did not complete for alice@example.com"
-  outerr_lacks "login --all: hans-betterdoc never reached" "Logging in to hans@betterdoc.test"
+  outerr_lacks "login --all: hans-acme never reached" "Logging in to hans@acme.test"
   rm -f "$H/stub-login-fails"
   # the CLI reports a different email than the one asked for: logged in, with the §12.2 warning
   rm -f "$STUB_LOG"
@@ -1225,15 +1262,15 @@ case_T21() { # status --verify
   run_script -- status --verify
   assert_rc "status --verify" 0
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins rc terminal account account account account next " "$order"
+  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
-  out_line "verified: hans-betterdoc not logged in" "account: 2 hans-betterdoc hans@betterdoc.test not-logged-in (verified)"
+  out_line "verified: hans-acme not logged in" "account: 2 hans-acme hans@acme.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
-  out_line "verified: hans-proton not logged in" "account: 4 hans-proton hans@proton.test not-logged-in (verified)"
+  out_line "verified: hans-mail not logged in" "account: 4 hans-mail hans@mail.test not-logged-in (verified)"
   out_has "next: names the first verified-missing account (alice)" "claude-multi login alice"
   assert_eq "auth status ran once per account" "4" "$(status_lines)"
   assert_file_has "auth status ran under the alice dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/alice"
-  assert_file_has "auth status ran under the hans-proton dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/hans-proton"
+  assert_file_has "auth status ran under the hans-mail dir" "$STUB_LOG" "auth-status CLAUDE_CONFIG_DIR=$acc/hans-mail"
   assert_eq "status --verify never calls auth login" "0" "$(login_lines)"
   assert_eq "status --verify wrote nothing (but the stub's own log)" "" "$(newer_than "$T/stamp" | grep -v -x -e "$H" -e "$STUB_LOG")"
   assert_file_empty "status --verify: nothing on stderr" "$T/err"
@@ -1256,18 +1293,18 @@ case_T21() { # status --verify
   restore_claude
   # a registered account whose dir is gone: `claude auth status` would create it (mode 755) just to say "no login"
   rm -f "$STUB_LOG"
-  rm -rf "$acc/hans-proton"
+  rm -rf "$acc/hans-mail"
   run_script -- status --verify
   assert_rc "status --verify with a missing account dir" 0
-  out_line "missing dir: hans-proton not-logged-in (verified)" "account: 4 hans-proton hans@proton.test not-logged-in (verified)"
-  assert_absent "missing dir: status --verify did not create it" "$acc/hans-proton"
+  out_line "missing dir: hans-mail not-logged-in (verified)" "account: 4 hans-mail hans@mail.test not-logged-in (verified)"
+  assert_absent "missing dir: status --verify did not create it" "$acc/hans-mail"
   assert_eq "missing dir: auth status ran for the three existing dirs only" "3" "$(status_lines)"
-  assert_file_lacks "missing dir: auth status never ran under hans-proton" "$STUB_LOG" "CLAUDE_CONFIG_DIR=$acc/hans-proton"
+  assert_file_lacks "missing dir: auth status never ran under hans-mail" "$STUB_LOG" "CLAUDE_CONFIG_DIR=$acc/hans-mail"
   # the next: hint reads the STATE field: an account whose slug/email is 'not-logged-in' is not "the first missing one"
   run_script -- add not-logged-in@x.test
   assert_rc "add not-logged-in@x.test" 0
   assert_dir "add: dir not-logged-in exists" "$acc/not-logged-in"
-  for slug in alice hans-betterdoc info hans-proton not-logged-in; do
+  for slug in alice hans-acme info hans-mail not-logged-in; do
     mkdir -p "$acc/$slug" && printf '{"oauthAccount":{"emailAddress":"x"}}\n' > "$acc/$slug/.claude.json"
   done
   run_script -- status
@@ -1309,12 +1346,12 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   outerr_lacks "all-n: the summary does not also say NOT touched" "rc file: NOT touched"
   outerr_has "all-n: the rc offer names ~/.zshrc" "Append the source line to $H/.zshrc? [y/N]"
   outerr_has "all-n: the login offer for alice" "Log in to alice@example.com now? [Y/n]"
-  outerr_has "all-n: the login offer for hans-proton (every account asked)" "Log in to hans@proton.test now? [Y/n]"
+  outerr_has "all-n: the login offer for hans-mail (every account asked)" "Log in to hans@mail.test now? [Y/n]"
   assert_same_file "all-n: ~/.zshrc untouched" "$T/zshrc.seed" "$H/.zshrc"
   assert_absent "all-n: no rc-file" "$H/.claude-multi/rc-file"
   assert_absent "all-n: no login ran" "$STUB_LOG"
   assert_absent "all-n: no ~/.bashrc" "$H/.bashrc"
-  # y (rc), n alice, y hans-betterdoc, n info, EOF → hans-proton never asked
+  # y (rc), n alice, y hans-acme, n info, EOF → hans-mail never asked
   write_answers y n y n
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, y n y n" 0
@@ -1323,24 +1360,24 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   assert_eq "y: ~/.zshrc is seed + blank + line" "3" "$(grep -c '' "$H/.zshrc")"
   assert_file_has "y: rc-file remembers ~/.zshrc" "$H/.claude-multi/rc-file" "$H/.zshrc"
   assert_eq "logins: exactly one ran" "1" "$(login_lines)"
-  assert_eq "logins: it was hans-betterdoc" "$(expected_login_line hans-betterdoc hans@betterdoc.test)" "$(login_line_n 1)"
-  out_has "logins: reported 'logged in as hans@betterdoc.test'" "logged in as hans@betterdoc.test"
-  assert_absent "logins: hans-proton never reached (EOF)" "$acc/hans-proton/.stub-logged-in"
+  assert_eq "logins: it was hans-acme" "$(expected_login_line hans-acme hans@acme.test)" "$(login_line_n 1)"
+  out_has "logins: reported 'logged in as hans@acme.test'" "logged in as hans@acme.test"
+  assert_absent "logins: hans-mail never reached (EOF)" "$acc/hans-mail/.stub-logged-in"
   assert_absent "n: alice has no marker" "$acc/alice/.stub-logged-in"
   assert_absent "n: info has no marker" "$acc/info/.stub-logged-in"
   cp "$H/.zshrc" "$T/zshrc.1"
-  # rc line present → no rc offer; hans-betterdoc logged in (both heuristic + verified) → not offered
-  mark_logged_in hans-betterdoc hans@betterdoc.test
+  # rc line present → no rc offer; hans-acme logged in (both heuristic + verified) → not offered
+  mark_logged_in hans-acme hans@acme.test
   write_answers y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, rc present, one y" 0
   outerr_lacks "rc present: no rc offer" "Append the source line"
   assert_same_file "rc present: ~/.zshrc unchanged" "$T/zshrc.1" "$H/.zshrc"
-  outerr_lacks "logged-in account not offered" "Log in to hans@betterdoc.test now?"
+  outerr_lacks "logged-in account not offered" "Log in to hans@acme.test now?"
   assert_eq "second round: one more login" "2" "$(login_lines)"
   assert_eq "second round: alice (slot 1) first" "$(expected_login_line alice alice@example.com)" "$(login_line_n 2)"
-  outerr_lacks "second round: EOF stopped before hans-proton" "Log in to hans@proton.test now?"
-  # the offers follow `add` too: info n, hans-proton y, the new account → EOF
+  outerr_lacks "second round: EOF stopped before hans-mail" "Log in to hans@mail.test now?"
+  # the offers follow `add` too: info n, hans-mail y, the new account → EOF
   mark_logged_in alice alice@example.com
   write_answers n y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- add e@x.test
@@ -1348,7 +1385,7 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   assert_dir "add: dir e exists" "$acc/e"
   outerr_has "add: info offered" "Log in to info@corp.test now? [Y/n]"
   assert_eq "add: one more login" "3" "$(login_lines)"
-  assert_eq "add: it was hans-proton" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 3)"
+  assert_eq "add: it was hans-mail" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 3)"
   assert_absent "add: info skipped (n)" "$acc/info/.stub-logged-in"
   assert_absent "add: e never reached (EOF)" "$acc/e/.stub-logged-in"
   assert_same_file "add: ~/.zshrc unchanged" "$T/zshrc.1" "$H/.zshrc"
@@ -1359,14 +1396,14 @@ case_T22() { # interactive offers (rc line, logins) driven by CLAUDE_MULTI_INPUT
   outerr_lacks "--relink: no login offer" "now? [Y/n]"
   assert_eq "--relink: no login ran" "3" "$(login_lines)"
   # a login that fails inside the offers: the next account is still offered (§12.4 is per account), setup exits 0
-  # (the offers read the .claude.json heuristic, so hans-proton — stub marker only — is offered again)
+  # (the offers read the .claude.json heuristic, so hans-mail — stub marker only — is offered again)
   : > "$H/stub-login-fails"
   write_answers y y y
   run_script "CLAUDE_MULTI_INPUT=$T/answers" SHELL=/bin/zsh -- setup
   assert_rc "setup, y y y with a failing stub" 0
   assert_eq "failing offers: all three accepted logins were attempted" "6" "$(login_lines)"
   assert_eq "failing offers: info first" "$(expected_login_line info info@corp.test)" "$(login_line_n 4)"
-  assert_eq "failing offers: then hans-proton (offered after the failure)" "$(expected_login_line hans-proton hans@proton.test)" "$(login_line_n 5)"
+  assert_eq "failing offers: then hans-mail (offered after the failure)" "$(expected_login_line hans-mail hans@mail.test)" "$(login_line_n 5)"
   assert_eq "failing offers: then e" "$(expected_login_line e e@x.test)" "$(login_line_n 6)"
   outerr_has "failing offers: 'login did not complete for info@corp.test'" "login did not complete for info@corp.test"
   outerr_has "failing offers: e still offered" "Log in to e@x.test now? [Y/n]"
@@ -1452,7 +1489,7 @@ case_T23() { # update through a stub curl serving CLAUDE_MULTI_UPDATE_URL=file:/
 }
 
 case_T24() { # settings sync: each account's settings.json mirrors the shared file when that is safe
-  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/hans-betterdoc/settings.json"
+  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/hans-acme/settings.json"
   set_cswap json
   run_script -- setup
   assert_rc "setup" 0
@@ -1478,22 +1515,22 @@ case_T24() { # settings sync: each account's settings.json mirrors the shared fi
   run_script -- sync
   assert_rc "sync after a shared edit" 0
   assert_file_has "alice got the new key" "$a" '"model": "opus"'
-  assert_file_has "hans-betterdoc got the new key" "$b" '"model": "opus"'
+  assert_file_has "hans-acme got the new key" "$b" '"model": "opus"'
   run_script -- status
   out_line "status: all in sync after propagation" "settings: 4 in sync, 0 pending, 0 modified"
   # a copy edited inside the account is kept and reported; --force <slug> overwrites just that one
   printf '{\n  "permissions": {\n    "allow": ["Bash(x:*)"]\n  }\n}\n' > "$b"
   run_script -- sync
   assert_rc "sync with a modified copy" 0
-  out_has "hans-betterdoc kept" "settings: hans-betterdoc modified since the last sync — kept"
+  out_has "hans-acme kept" "settings: hans-acme modified since the last sync — kept"
   assert_file_has "kept copy untouched" "$b" 'Bash(x:*)'
   run_script -- status
   out_line "status counts the modified copy" "settings: 3 in sync, 0 pending, 1 modified"
   run_script -- setup
-  err_matches "setup warns about the kept copy" 'settings: hans-betterdoc modified since the last sync'
-  run_script -- sync --force hans-betterdoc
-  assert_rc "sync --force hans-betterdoc" 0
-  out_has "forced overwrite reported" "settings: hans-betterdoc overwritten (--force)"
+  err_matches "setup warns about the kept copy" 'settings: hans-acme modified since the last sync'
+  run_script -- sync --force hans-acme
+  assert_rc "sync --force hans-acme" 0
+  out_has "forced overwrite reported" "settings: hans-acme overwritten (--force)"
   assert_file_has "forced copy has the shared allow rule" "$b" 'Bash(ls:*)'
   assert_file_lacks "forced copy lost its own rule" "$b" 'Bash(x:*)'
   # --force with no slug overwrites every modified copy
@@ -1671,9 +1708,348 @@ case_T27() { # executable launchers (§15): a real file per account, the functio
   assert_exists "alice's launcher survived" "$bin/claude-alice"
 }
 
+case_T28() { # §16.2 the migration table: one project per row, one run; then the rollback and the status counts
+  local seedp="$H/.claude/projects" store="$H/.claude-shared/memory" al="$H/.claude-accounts/alice/projects"
+  local p1="-r-move" p2="-r-empty" p3="-r-conflict" p4="-r-linked" p5="-r-elsewhere" p6="-r-emptystore" p7="-r-storeonly" p8="-r-rollback" p9="-r-dangling"
+  local rows="1${TAB}alice@example.com"
+  set_cswap absent
+  mkdir -p "$seedp/$p1/memory"; printf 'one\n' > "$seedp/$p1/memory/MEMORY.md"            # real dir | store absent
+  mkdir -p "$seedp/$p2/memory" "$store/$p2"; printf 'two\n' > "$store/$p2/MEMORY.md"       # empty real dir | store present
+  mkdir -p "$seedp/$p3/memory" "$store/$p3"                                                # non-empty | non-empty
+  printf 'seed side\n' > "$seedp/$p3/memory/SEED.md"; printf 'store side\n' > "$store/$p3/STORE.md"
+  mkdir -p "$seedp/$p4" "$store/$p4"; printf 'four\n' > "$store/$p4/MEMORY.md"             # link to the store | present
+  ln -s "$store/$p4" "$seedp/$p4/memory"
+  mkdir -p "$seedp/$p5" "$T/elsewhere"; printf 'five\n' > "$T/elsewhere/MEMORY.md"         # link elsewhere | absent
+  ln -s "$T/elsewhere" "$seedp/$p5/memory"
+  mkdir -p "$seedp/$p6/memory" "$store/$p6"; printf 'six\n' > "$seedp/$p6/memory/MEMORY.md"  # non-empty | present but empty
+  mkdir -p "$seedp/$p7" "$store/$p7"; printf 'seven\n' > "$store/$p7/MEMORY.md"            # no memory in ~/.claude | present
+  mkdir -p "$seedp/$p9"; ln -s "$store/$p9" "$seedp/$p9/memory"                            # link to the store | absent
+  mkdir -p "$al/$p3"; ln -s "$seedp/$p3/memory" "$al/$p3/memory"                           # alice: a v1.4 link into ~/.claude
+  run_script -- status
+  out_line "status before: what is shared, what a run would move, what needs a human" "memory: 2 shared, 3 still in ~/.claude, 0 in one account, 3 conflicts"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup (a conflict is a warning, not an error)" 0
+  # row 1: real dir, no store → moved, a link stays behind
+  assert_file_has "row 1: the folder is in the store" "$store/$p1/MEMORY.md" 'one'
+  assert_link_to "row 1: ~/.claude links to the store" "$seedp/$p1/memory" "$store/$p1"
+  assert_link_to "row 1: alice links to the store" "$al/$p1/memory" "$store/$p1"
+  # row 2: empty real dir, store present → replaced with a link
+  assert_link_to "row 2: the empty dir became a link" "$seedp/$p2/memory" "$store/$p2"
+  assert_file_has "row 2: the store's file is intact" "$store/$p2/MEMORY.md" 'two'
+  out_has "row 2: reported as 'replace empty dir'" "replace empty dir $seedp/$p2/memory"
+  # row 3: both non-empty → nothing changes, both paths named
+  assert_dir "row 3: ~/.claude still holds its folder" "$seedp/$p3/memory"
+  assert_file_has "row 3: the ~/.claude side is intact" "$seedp/$p3/memory/SEED.md" 'seed side'
+  assert_file_has "row 3: the store side is intact" "$store/$p3/STORE.md" 'store side'
+  assert_absent "row 3: nothing was merged into the store" "$store/$p3/SEED.md"
+  assert_absent "row 3: nothing was merged into ~/.claude" "$seedp/$p3/memory/STORE.md"
+  err_matches "row 3: the warning says conflict" 'warning: .*conflict'
+  err_has "row 3: the warning names the ~/.claude path" "$seedp/$p3/memory"
+  err_has "row 3: the warning names the store path" "$store/$p3"
+  assert_link_to "row 3: alice's link is not repointed" "$al/$p3/memory" "$seedp/$p3/memory"
+  # row 4: already a link to the store → nothing
+  assert_link_to "row 4: the link is as it was" "$seedp/$p4/memory" "$store/$p4"
+  out_lacks "row 4: no change line names it" "$seedp/$p4/memory"
+  assert_link_to "row 4: alice links to the store" "$al/$p4/memory" "$store/$p4"
+  # row 5: a link somewhere else → left alone, warned
+  assert_link_to "row 5: the link is as it was" "$seedp/$p5/memory" "$T/elsewhere"
+  err_has "row 5: the warning names the path" "$seedp/$p5/memory"
+  assert_absent "row 5: no store folder made" "$store/$p5"
+  assert_absent "row 5: nothing linked for alice" "$al/$p5"
+  assert_file_has "row 5: the other folder is intact" "$T/elsewhere/MEMORY.md" 'five'
+  # a link to a store folder that is gone → left alone, warned; nothing is created for it
+  assert_link_to "dangling: the link is as it was" "$seedp/$p9/memory" "$store/$p9"
+  err_has "dangling: the warning says the folder does not exist" "$store/$p9, which does not exist"
+  assert_absent "dangling: no store folder made" "$store/$p9"
+  assert_absent "dangling: nothing linked for alice" "$al/$p9"
+  # beyond the table: an empty store folder does not block the move; a store with no memory in ~/.claude gets its link
+  assert_file_has "empty store folder: ~/.claude's files moved in" "$store/$p6/MEMORY.md" 'six'
+  assert_link_to "empty store folder: ~/.claude links to the store" "$seedp/$p6/memory" "$store/$p6"
+  assert_link_to "store only: ~/.claude gains the link" "$seedp/$p7/memory" "$store/$p7"
+  assert_link_to "store only: alice links to the store" "$al/$p7/memory" "$store/$p7"
+  run_script -- status
+  out_line "status after: only the three a human must settle remain" "memory: 5 shared, 0 still in ~/.claude, 0 in one account, 3 conflicts"
+  # the warnings repeat on a re-run; nothing else happens
+  run_script -- setup
+  assert_rc "second setup" 0
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  err_matches "the conflict is still reported" 'warning: .*conflict'
+  # rollback: when the link cannot be made, the folder goes back where it was
+  mkdir -p "$seedp/$p8/memory"; printf 'eight\n' > "$seedp/$p8/memory/MEMORY.md"
+  printf '#!/bin/sh\nexit 1\n' > "$H/bin/ln"; chmod 755 "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink with a failing ln" 1
+  assert_dir "rollback: ~/.claude holds the folder again" "$seedp/$p8/memory"
+  assert_file_has "rollback: its file is intact" "$seedp/$p8/memory/MEMORY.md" 'eight'
+  assert_absent "rollback: nothing left in the store" "$store/$p8"
+  err_has "rollback: the error says it was moved back" "moved back"
+  rm -f "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink once ln works again" 0
+  assert_link_to "then the move goes through" "$seedp/$p8/memory" "$store/$p8"
+  assert_file_has "and the file is in the store" "$store/$p8/MEMORY.md" 'eight'
+}
+
+case_T29() { # upgrade from the v1.4 layout: --dry-run, the move, account links repointed off ~/.claude, idempotent re-run
+  local pa="-Users-x-repo-a" pb="-Users-x-repo-b" seedp="$H/.claude/projects" store="$H/.claude-shared/memory"
+  local al="$H/.claude-accounts/alice/projects" bo="$H/.claude-accounts/bob/projects"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com" tree
+  set_cswap absent
+  mkdir -p "$seedp/$pa/memory" "$seedp/$pb/memory" "$al/$pa" "$al/$pb" "$bo/$pa"
+  printf '# memory a\n' > "$seedp/$pa/memory/MEMORY.md"; printf '# memory b\n' > "$seedp/$pb/memory/MEMORY.md"
+  ln -s "$seedp/$pa/memory" "$al/$pa/memory"; ln -s "$seedp/$pb/memory" "$al/$pb/memory"   # what v1.4 made
+  ln -s "$seedp/$pa/memory" "$bo/$pa/memory"
+  tree=$( cd "$H" && find . ! -path './bin*' | sort )
+  stamp
+  run_script "ACCOUNT_ROWS=$rows" -- setup --dry-run
+  assert_rc "setup --dry-run" 0
+  out_line "dry-run: would move" "  [dry-run] would move $seedp/$pa/memory to $store/$pa"
+  out_line "dry-run: would link ~/.claude to the store" "  [dry-run] would link $seedp/$pa/memory -> $store/$pa"
+  out_line "dry-run: would repoint alice's link" "  [dry-run] would repoint $al/$pa/memory -> $store/$pa (was $seedp/$pa/memory)"
+  out_line "dry-run: would link bob's missing repo-b" "  [dry-run] would link $bo/$pb/memory -> $store/$pb"
+  assert_eq "dry-run: no '  + ' change lines" "0" "$(count_matches "$T/out" '^  \+ ')"
+  assert_eq "dry-run: same file tree" "$tree" "$( cd "$H" && find . ! -path './bin*' | sort )"
+  assert_eq "dry-run: nothing modified" "" "$(newer_than "$T/stamp")"
+  assert_dir "dry-run: the folder is still in ~/.claude" "$seedp/$pa/memory"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  assert_link_to "~/.claude repo-a links to the store" "$seedp/$pa/memory" "$store/$pa"
+  assert_link_to "alice repo-a: repointed straight to the store" "$al/$pa/memory" "$store/$pa"
+  assert_link_to "alice repo-b: repointed straight to the store" "$al/$pb/memory" "$store/$pb"
+  assert_link_to "bob repo-a: repointed straight to the store" "$bo/$pa/memory" "$store/$pa"
+  assert_link_to "bob repo-b: linked" "$bo/$pb/memory" "$store/$pb"
+  out_line "the repoint names the old target" "  + repoint $al/$pa/memory -> $store/$pa (was $seedp/$pa/memory)"
+  assert_file_has "the memory reads the same through alice" "$al/$pa/memory/MEMORY.md" '# memory a'
+  assert_file_has "the memory reads the same through ~/.claude" "$seedp/$pb/memory/MEMORY.md" '# memory b'
+  assert_eq "no account link goes through ~/.claude any more" "" \
+    "$(find "$H/.claude-accounts" -name memory -type l -exec readlink {} \; | grep -F "$H/.claude/" || true)"
+  run_script -- status
+  out_line "status: both repos shared" "memory: 2 shared, 0 still in ~/.claude, 0 in one account, 0 conflicts"
+  # idempotent: setup and --relink again change nothing
+  stamp
+  run_script -- setup
+  assert_rc "second setup" 0
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup modified nothing" "" "$(newer_than "$T/stamp")"
+  run_script -- --relink
+  assert_rc "--relink" 0
+  out_line "--relink says No changes" "No changes — everything was already in place."
+  assert_eq "--relink modified nothing" "" "$(newer_than "$T/stamp")"
+  assert_file_empty "no warning anywhere" "$T/err"
+}
+
+case_T30() { # a machine where one project was moved by hand: ~/.claude and the accounts already link to the store
+  local pa="-Users-x-repo-a" pb="-Users-x-repo-b" seedp="$H/.claude/projects" store="$H/.claude-shared/memory"
+  local al="$H/.claude-accounts/alice/projects" bo="$H/.claude-accounts/bob/projects"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com" im
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup before any repo has memory" 0
+  mkdir -p "$store/$pa" "$seedp/$pa" "$al/$pa" "$bo/$pa"; chmod 700 "$al/$pa" "$bo/$pa"
+  printf '# by hand\n' > "$store/$pa/MEMORY.md"
+  ln -s "$store/$pa" "$seedp/$pa/memory"; ln -s "$store/$pa" "$al/$pa/memory"; ln -s "$store/$pa" "$bo/$pa/memory"
+  # a second project whose ~/.claude link is spelled differently (trailing slash) but lands on the same folder
+  mkdir -p "$store/$pb" "$seedp/$pb" "$al/$pb" "$bo/$pb"; chmod 700 "$al/$pb" "$bo/$pb"
+  ln -s "$store/$pb/" "$seedp/$pb/memory"; ln -s "$store/$pb" "$al/$pb/memory"; ln -s "$store/$pb" "$bo/$pb/memory"
+  im=$(inode_of "$store/$pa")
+  stamp
+  run_script -- setup
+  assert_rc "setup on the hand-migrated machine" 0
+  out_line "setup says No changes" "No changes — everything was already in place."
+  run_script -- --relink
+  assert_rc "--relink on the hand-migrated machine" 0
+  out_line "--relink says No changes" "No changes — everything was already in place."
+  assert_eq "nothing modified" "" "$(newer_than "$T/stamp")"
+  assert_eq "the store folder is the same folder" "$im" "$(inode_of "$store/$pa")"
+  assert_link_to "~/.claude link as made by hand" "$seedp/$pa/memory" "$store/$pa"
+  assert_link_to "alice link as made by hand" "$al/$pa/memory" "$store/$pa"
+  assert_file_empty "no warning" "$T/err"
+  run_script -- status
+  assert_link_to "a link spelled another way is left as it is" "$seedp/$pb/memory" "$store/$pb/"
+  out_line "status counts both as shared" "memory: 2 shared, 0 still in ~/.claude, 0 in one account, 0 conflicts"
+}
+
+case_T31() { # §16.3 the two memory allow rules: the shared file, the account copies, a modified copy, --relink, no jq/python3
+  local sh="$H/.claude-shared/settings.json" a="$H/.claude-accounts/alice/settings.json" b="$H/.claude-accounts/bob/settings.json"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  assert_file_has "shared: writes through an account's memory path are allowed" "$sh" "\"$MEM_RULE_ACCT\""
+  assert_file_has "shared: writes into the store are allowed" "$sh" "\"$MEM_RULE_STORE\""
+  assert_eq "shared: appended after the seeded rule" "[\"Bash(ls:*)\",\"$MEM_RULE_ACCT\",\"$MEM_RULE_STORE\"]" "$(jq -c '.permissions.allow' "$sh")"
+  assert_eq "shared: every other key as seeded, in order" "$(jq -c 'del(.permissions)' "$H/.claude/settings.json")" "$(jq -c 'del(.permissions)' "$sh")"
+  assert_mode "shared settings.json is mode 600" "$sh" "-rw-------"
+  out_has "the change is reported" "allow memory writes in $sh"
+  assert_file_has "alice's own settings.json carries the account-path rule" "$a" "\"$MEM_RULE_ACCT\""
+  assert_file_has "alice's own settings.json carries the store rule" "$a" "\"$MEM_RULE_STORE\""
+  assert_same_file "the seed in ~/.claude is not edited" "$FIX/seed-settings.json" "$H/.claude/settings.json"
+  stamp
+  run_script -- setup
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup wrote nothing" "" "$(newer_than "$T/stamp")"
+  assert_eq "each rule is there once" "1 1" "$(grep -cF "\"$MEM_RULE_ACCT\"" "$sh") $(grep -cF "\"$MEM_RULE_STORE\"" "$sh")"
+  # a shared file that has one of the two gains only the other; --relink delivers it to the accounts too
+  printf '{"permissions": {"allow": ["%s", "Bash(z:*)"]}, "model": "opus"}\n' "$MEM_RULE_STORE" > "$sh"
+  run_script -- --relink
+  assert_rc "--relink" 0
+  assert_eq "only the missing rule is added, at the end" "[\"$MEM_RULE_STORE\",\"Bash(z:*)\",\"$MEM_RULE_ACCT\"]" "$(jq -c '.permissions.allow' "$sh")"
+  assert_file_has "the user's other key survives" "$sh" '"model": "opus"'
+  assert_file_has "--relink carried the rule into alice's own settings.json" "$a" "\"$MEM_RULE_ACCT\""
+  assert_file_has "and the user's rule with it" "$a" '"Bash(z:*)"'
+  # a copy edited inside the account is kept (§13) — and still gains the two rules, additively
+  printf '{\n  "permissions": {\n    "allow": ["Bash(x:*)"]\n  },\n  "model": "haiku"\n}\n' > "$b"
+  run_script -- setup
+  assert_rc "setup with a modified copy" 0
+  assert_eq "bob: his rule first, then the two memory rules" "[\"Bash(x:*)\",\"$MEM_RULE_ACCT\",\"$MEM_RULE_STORE\"]" "$(jq -c '.permissions.allow' "$b")"
+  assert_file_has "bob: his own key kept (not overwritten by the shared file)" "$b" '"model": "haiku"'
+  out_has "bob: the change is reported" "allow memory writes in $b"
+  err_matches "bob: still reported as modified" 'settings: bob modified since the last sync'
+  run_script -- status
+  out_line "status still counts bob as modified" "settings: 1 in sync, 0 pending, 1 modified"
+  run_script -- setup
+  out_line "the rules are added to bob once" "No changes — everything was already in place."
+  # opting out: with the two rules under permissions.ask (the prompt back) the presence test finds them and adds nothing
+  printf '{"permissions": {"allow": ["Bash(w:*)"], "ask": ["%s", "%s"]}}\n' "$MEM_RULE_ACCT" "$MEM_RULE_STORE" > "$sh"
+  cp "$sh" "$T/sh.optout"
+  run_script -- setup
+  assert_rc "setup with the two rules under ask" 0
+  assert_same_file "opt-out: the shared file is exactly as the user wrote it" "$T/sh.optout" "$sh"
+  assert_file_has "opt-out: alice's synced copy carries them under ask too" "$a" '"ask"'
+  assert_eq "opt-out: nothing was added to alice's allow list" '["Bash(w:*)"]' "$(jq -c '.permissions.allow' "$a")"
+  # without jq and python3 the rules cannot be merged: a warning names both, the file is untouched
+  printf '{"permissions": {"allow": ["Bash(q:*)"]}}\n' > "$sh"; cp "$sh" "$T/sh.before"
+  shadow_tools jq python3
+  run_script -- setup
+  assert_rc "setup without jq/python3" 0
+  err_has "the warning names the account-path rule" "$MEM_RULE_ACCT"
+  err_has "the warning names the store rule" "$MEM_RULE_STORE"
+  assert_same_file "the shared file is untouched without tools" "$T/sh.before" "$sh"
+  assert_rc_untouched
+}
+
+case_T32() { # §16.7 adoption: memory first created inside an account becomes the shared folder
+  local seedp="$H/.claude/projects" store="$H/.claude-shared/memory"
+  local al="$H/.claude-accounts/alice/projects" bo="$H/.claude-accounts/bob/projects"
+  local q1="-q-only-alice" q2="-q-empty-seed" q3="-q-both" q4="-q-store-full" q5="-q-empty-only" q6="-q-empty-store" q7="-q-rollback"
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com" i1 ia tree
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup before any repo has memory" 0
+  mkdir -p "$al/$q1/memory"; printf 'one\n' > "$al/$q1/memory/MEMORY.md"                  # only alice; ~/.claude never saw the repo
+  mkdir -p "$al/$q2/memory" "$seedp/$q2/memory"; printf 'two\n' > "$al/$q2/memory/MEMORY.md"  # alice; ~/.claude has an EMPTY folder
+  mkdir -p "$al/$q3/memory" "$bo/$q3/memory"                                             # alice AND bob hold files
+  printf 'alice side\n' > "$al/$q3/memory/A.md"; printf 'bob side\n' > "$bo/$q3/memory/B.md"
+  mkdir -p "$al/$q4/memory" "$store/$q4"                                                 # alice; the store already holds files
+  printf 'alice own\n' > "$al/$q4/memory/OWN.md"; printf 'shared\n' > "$store/$q4/MEMORY.md"
+  mkdir -p "$al/$q5/memory"                                                              # alice: an EMPTY folder, nothing anywhere else
+  mkdir -p "$al/$q6/memory" "$store/$q6" "$seedp/$q6"; printf 'six\n' > "$al/$q6/memory/MEMORY.md"  # alice; an empty store folder ~/.claude links to
+  ln -s "$store/$q6" "$seedp/$q6/memory"
+  i1=$(inode_of "$al/$q1/memory")
+  run_script -- status
+  out_line "status before: three to adopt, two for a human" "memory: 0 shared, 0 still in ~/.claude, 3 in one account, 2 conflicts"
+  tree=$( cd "$H" && find . ! -path './bin*' | sort )
+  stamp
+  run_script -- setup --dry-run
+  assert_rc "setup --dry-run" 0
+  out_line "dry-run: would move alice's folder into the store" "  [dry-run] would move $al/$q1/memory to $store/$q1"
+  out_line "dry-run: would leave a link in alice" "  [dry-run] would link $al/$q1/memory -> $store/$q1"
+  out_line "dry-run: the empty ~/.claude folder would become a link" "  [dry-run] would replace empty dir $seedp/$q2/memory with link -> $store/$q2"
+  out_lacks "dry-run: the empty ~/.claude folder is not what moves" "would move $seedp/$q2/memory"
+  out_line "dry-run: bob would be linked to the adopted folder" "  [dry-run] would link $bo/$q1/memory -> $store/$q1"
+  assert_eq "dry-run: same file tree" "$tree" "$( cd "$H" && find . ! -path './bin*' | sort )"
+  assert_eq "dry-run: nothing modified" "" "$(newer_than "$T/stamp")"
+  run_script -- setup
+  assert_rc "setup (conflicts are warnings)" 0
+  # only alice → her folder IS the store folder now; she and bob link to it; ~/.claude never had the repo, so nothing is made there
+  assert_file_has "only alice: her file is in the store" "$store/$q1/MEMORY.md" 'one'
+  assert_eq "only alice: moved, not copied (same inode)" "$i1" "$(inode_of "$store/$q1")"
+  assert_link_to "only alice: a link stays in her account" "$al/$q1/memory" "$store/$q1"
+  assert_link_to "only alice: bob is linked" "$bo/$q1/memory" "$store/$q1"
+  assert_absent "only alice: no project dir made in ~/.claude" "$seedp/$q1"
+  out_line "only alice: the move is reported" "  + move $al/$q1/memory to $store/$q1"
+  # alice + an empty folder in ~/.claude → alice's files are the shared ones, the empty folder becomes a link
+  assert_file_has "empty ~/.claude folder: alice's file is in the store" "$store/$q2/MEMORY.md" 'two'
+  assert_link_to "empty ~/.claude folder: it became a link" "$seedp/$q2/memory" "$store/$q2"
+  assert_link_to "empty ~/.claude folder: alice links to the store" "$al/$q2/memory" "$store/$q2"
+  assert_link_to "empty ~/.claude folder: bob links to the store" "$bo/$q2/memory" "$store/$q2"
+  # two accounts hold files → never merged: nothing changes, both paths named
+  assert_file_has "both: alice's folder is intact" "$al/$q3/memory/A.md" 'alice side'
+  assert_file_has "both: bob's folder is intact" "$bo/$q3/memory/B.md" 'bob side'
+  assert_dir "both: alice's is still a real folder" "$al/$q3/memory"
+  assert_dir "both: bob's is still a real folder" "$bo/$q3/memory"
+  assert_absent "both: no store folder made" "$store/$q3"
+  err_matches "both: the warning says conflict" 'warning: memory conflict: .*-q-both'
+  err_has "both: the warning names alice's path" "$al/$q3/memory"
+  err_has "both: the warning names bob's path" "$bo/$q3/memory"
+  # the store already holds files → alice's own folder is left alone, the warning says where its files belong
+  assert_file_has "store full: alice's own file is intact" "$al/$q4/memory/OWN.md" 'alice own'
+  assert_file_has "store full: the shared file is intact" "$store/$q4/MEMORY.md" 'shared'
+  assert_absent "store full: nothing merged into the store" "$store/$q4/OWN.md"
+  err_has "store full: the warning names alice's path" "$al/$q4/memory"
+  assert_link_to "store full: bob links to the store" "$bo/$q4/memory" "$store/$q4"
+  # an empty folder holds no memory → nothing is adopted, nothing is created
+  assert_dir "empty only: alice's empty folder is left as it is" "$al/$q5/memory"
+  assert_absent "empty only: no store folder" "$store/$q5"
+  assert_absent "empty only: nothing made for bob" "$bo/$q5"
+  # an empty store folder does not block adoption, and the ~/.claude link to it stays valid
+  assert_file_has "empty store: alice's file is in the store" "$store/$q6/MEMORY.md" 'six'
+  assert_link_to "empty store: alice links to the store" "$al/$q6/memory" "$store/$q6"
+  assert_link_to "empty store: the ~/.claude link is as it was" "$seedp/$q6/memory" "$store/$q6"
+  assert_file_has "empty store: readable through ~/.claude" "$seedp/$q6/memory/MEMORY.md" 'six'
+  run_script -- status
+  out_line "status after: three adopted, two for a human" "memory: 3 shared, 0 still in ~/.claude, 0 in one account, 2 conflicts"
+  stamp
+  run_script -- setup
+  assert_rc "second setup" 0
+  out_line "second setup says No changes" "No changes — everything was already in place."
+  assert_eq "second setup modified nothing" "" "$(newer_than "$T/stamp")"
+  # rollback: when the link cannot be made, the folder goes back into the account
+  mkdir -p "$al/$q7/memory"; printf 'seven\n' > "$al/$q7/memory/MEMORY.md"
+  printf '#!/bin/sh\nexit 1\n' > "$H/bin/ln"; chmod 755 "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink with a failing ln" 1
+  assert_dir "rollback: alice holds the folder again" "$al/$q7/memory"
+  assert_file_has "rollback: its file is intact" "$al/$q7/memory/MEMORY.md" 'seven'
+  assert_absent "rollback: nothing left in the store" "$store/$q7"
+  err_has "rollback: the error says it was moved back" "moved back"
+  rm -f "$H/bin/ln"
+  run_script -- --relink
+  assert_rc "--relink once ln works again" 0
+  assert_link_to "then --relink adopts it" "$al/$q7/memory" "$store/$q7"
+  assert_file_has "and the file is in the store" "$store/$q7/MEMORY.md" 'seven'
+  # only a registered account is a source: a directory under ~/.claude-accounts that is no account is never adopted from.
+  # The name with a newline is the dangerous one: cut at the newline it reads as alice's own directory.
+  ia=$(inode_of "$H/.claude-accounts/alice")
+  mkdir -p "$H/.claude-accounts/stray/projects/-q-stray/memory"; printf 'stray\n' > "$H/.claude-accounts/stray/projects/-q-stray/memory/MEMORY.md"
+  mkdir -p "$H/.claude-accounts/alice${NL}x/projects/-q-newline/memory"
+  printf 'odd\n' > "$H/.claude-accounts/alice${NL}x/projects/-q-newline/memory/MEMORY.md"
+  mkdir -p "$seedp/-q-ctl${NL}-q-ctl2/memory"; printf 'ctl\n' > "$seedp/-q-ctl${NL}-q-ctl2/memory/MEMORY.md"   # a project name with a newline
+  run_script -- status
+  out_line "not an account / odd names: status does not count them" "memory: 4 shared, 0 still in ~/.claude, 0 in one account, 2 conflicts"
+  run_script -- setup
+  assert_rc "setup with a stray directory and names that contain a newline" 0
+  assert_dir "newline name: alice's account dir is still a real directory" "$H/.claude-accounts/alice"
+  assert_eq "newline name: alice's account dir was not moved (same inode)" "$ia" "$(inode_of "$H/.claude-accounts/alice")"
+  assert_absent "newline name: nothing appeared in the store" "$store/-q-newline"
+  assert_file_has "newline name: the odd folder is untouched" "$H/.claude-accounts/alice${NL}x/projects/-q-newline/memory/MEMORY.md" 'odd'
+  assert_file_has "not an account: its folder is untouched" "$H/.claude-accounts/stray/projects/-q-stray/memory/MEMORY.md" 'stray'
+  assert_dir "not an account: still a real folder" "$H/.claude-accounts/stray/projects/-q-stray/memory"
+  assert_absent "not an account: nothing appeared in the store" "$store/-q-stray"
+  assert_dir "project name with a newline: left where it is" "$seedp/-q-ctl${NL}-q-ctl2/memory"
+  assert_absent "project name with a newline: no store entry for its first line" "$store/-q-ctl"
+  assert_absent "project name with a newline: no store entry for its second line" "$store/-q-ctl2"
+  out_lacks "no move was made or reported" "  + move "
+}
+
 case_title() {
   case "$1" in
     T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
+    T28) printf 'memory migration table (one project per row), rollback, status counts' ;;
+    T29) printf 'upgrade from the v1.4 memory layout: dry-run, move, links repointed, idempotent' ;;
+    T30) printf 'hand-migrated machine: links already point at the store' ;;
+    T31) printf 'memory allow rules: shared file, account copies, modified copy, relink, no tools' ;;
+    T32) printf 'adoption: memory first created inside an account becomes the shared folder' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -1685,7 +2061,7 @@ case_title() {
     T9) printf 'second run is a no-op' ;;
     T10) printf '5th account added in cswap' ;;
     T11) printf '%s' '--relink after deleting one link' ;;
-    T12) printf 'per-repo memory links' ;;
+    T12) printf 'per-repo memory: the store in ~/.claude-shared, links from ~/.claude and every account' ;;
     T13) printf '%s' '--rc twice (zsh), bash, --rc=FILE' ;;
     T14) printf 'aliases.sh sourced in zsh and bash' ;;
     T15) printf 'remove b@y.test' ;;
@@ -1732,8 +2108,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-7]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T27)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-9] | T3[0-2]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T32)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES

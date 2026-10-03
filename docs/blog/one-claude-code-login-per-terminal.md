@@ -19,9 +19,9 @@ Everything else in claude-multi is bookkeeping around that fact.
 
 ```
 ~/.claude-accounts/<slug>/   one CLAUDE_CONFIG_DIR per account: its login, sessions, history
-~/.claude-shared/            settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/, output-styles/
+~/.claude-shared/            settings.json, mcp.json, CLAUDE.md, commands/, agents/, skills/, output-styles/, memory/
 ~/.claude-multi/             the script, the generated aliases.sh, the account list
-~/.claude                    untouched: the default account, read once as the seed
+~/.claude                    the default account, read once as the seed; untouched except that per-repo memory moves out
 ```
 
 ## Shared where it should be, and how
@@ -36,7 +36,7 @@ claude --mcp-config ~/.claude-shared/mcp.json --settings ~/.claude-shared/settin
 
 Two details of that line are load-bearing. Both are root options, so they must come before any subcommand (`claude mcp list --settings x` is rejected). And `--mcp-config` is variadic: it keeps consuming arguments until it meets another option, so `--settings` follows it on purpose, to terminate the list before the user's own arguments start.
 
-Per-repo auto-memory is shared too: for every `~/.claude/projects/<repo>/memory/` that exists, each account gets a symlink to it. The canonical folder stays in `~/.claude`; nothing is moved.
+Per-repo auto-memory is shared too. Since v1.5 the real folder is `~/.claude-shared/memory/<repo>/`, and `~/.claude/projects/<repo>/memory` and every account's own `projects/<repo>/memory` are symlinks to it. Setup moves the folder there, because `.claude` is a protected directory in Claude Code: while memory stayed in `~/.claude`, every memory write from an account session asked for permission.
 
 Plugins take the same route: each account's `plugins/` is a symlink to `~/.claude/plugins`, so a plugin installed once is installed everywhere, a plugin a repository enables in its `.claude/settings.json` loads under every account, and no account shows `failed to load` for a plugin another account fetched. Whether a plugin is on comes from `settings.json`, which is shared already. Claude Code writes into that directory from every account, which is the same situation as several terminals of one account.
 
@@ -46,7 +46,7 @@ Per account, on purpose: the credential, `.claude.json` (sessions, per-project t
 |---|---|---|
 | `settings.json`, `mcp.json` | yes | `--settings` / `--mcp-config` flags on every launch |
 | `CLAUDE.md`, commands, agents, skills, output styles | yes | symlinks into each account dir |
-| per-repo memory | yes | symlink to `~/.claude/projects/<repo>/memory` |
+| per-repo memory | yes | symlink to `~/.claude-shared/memory/<repo>` |
 | plugins | yes | symlink to `~/.claude/plugins` |
 | login, `.claude.json`, sessions, fleet view | no | per account dir |
 

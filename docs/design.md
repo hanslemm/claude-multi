@@ -38,9 +38,10 @@ Three facts shape everything below (verified against Claude Code 2.1.x):
 
 | Path | Owner | Purpose |
 |---|---|---|
-| `~/.claude` , `~/.claude.json` | the user / cswap | untouched: the DEFAULT account, read only as the seed |
+| `~/.claude` , `~/.claude.json` | the user / cswap | the DEFAULT account, read as the seed. Untouched, with one exception (v1.5, §16): a `projects/<p>/memory` folder is moved to the store below and replaced by a link to it |
 | `~/.claude-accounts/<slug>/` (mode 700) | the script creates; Claude Code fills | one `CLAUDE_CONFIG_DIR` per account; never deleted by the tool |
 | `~/.claude-shared/` | the script seeds ONCE; the user edits | `settings.json`, `mcp.json`, `CLAUDE.md`, `commands/`, `agents/`, `skills/`, `output-styles/` |
+| `~/.claude-shared/memory/<p>/` (v1.5, §16) | the script moves it there; Claude Code fills | the per-repo auto-memory folders: the real ones, one per project |
 | `~/.claude-multi/claude-multi-setup.sh` | the script self-installs | stable path every message refers to |
 | `~/.claude-multi/aliases.sh` | generated every run | launchers, `cuse`, `cwho`; sourced by zsh AND bash |
 | `~/.claude-multi/accounts.tsv` | generated / `add` / `remove` | the account list and slug registry (§4) |
@@ -55,10 +56,12 @@ Sharing model:
   replace a symlink with a plain file and silently un-share it.
 - **Per account, never shared**: `.claude.json` (session, per-project trust, user-scope MCP servers
   added with `claude mcp add`), history, sessions, credentials.
-- **Per-repo auto-memory IS shared**: for every `~/.claude/projects/<p>/memory/` that exists as a
-  real directory, each account gets `projects/<p>/memory` as a symlink to it. The canonical folder
-  stays in `~/.claude` (nothing there is moved). A repo that gains memory later needs a re-run or
-  `--relink`.
+- **Per-repo auto-memory IS shared (v1.5, §16)**: the real folder is `~/.claude-shared/memory/<p>/`.
+  `~/.claude/projects/<p>/memory` and each account's `projects/<p>/memory` are symlinks straight to
+  it, one hop each. A folder found in `~/.claude` is moved into the store by `setup` and `--relink`:
+  the one thing the tool moves out of `~/.claude`. Memory first created inside one account is adopted
+  the same way (§16.7). A repo that gains memory later needs a re-run or `--relink`. (Up to v1.4 the folder stayed in `~/.claude` and only the accounts linked to it; §16
+  says why that had to change.)
 - **Plugins ARE shared (v1.3, §14)**: when `~/.claude/plugins` is a real directory (the default
   account has started Claude Code once), each account gets `plugins` as a symlink to it. One installed
   set, marketplace list and cache for every account; which plugins are enabled comes from
@@ -83,14 +86,17 @@ claude-multi-setup.sh sync [--force [<slug>]] [--merge-local] [--dry-run]   (v1.
 claude-multi-setup.sh --help | -h | --version
 ```
 
-- `setup` (default): discover accounts (§4), seed shared config, create account dirs + symlinks +
-  memory + plugins links, write `accounts.tsv`, generate `aliases.sh`, self-install, handle the rc line, print
+- `setup` (default): discover accounts (§4), seed shared config, move per-repo memory into the store
+  (§16), create account dirs + symlinks + memory + plugins links, sync the settings (§13, §16.3), write
+  `accounts.tsv`, generate `aliases.sh`, self-install, handle the rc line, print
   the summary. Idempotent: a re-run with nothing new prints `No changes — everything was already in
   place.` and leaves the filesystem byte-identical (mtimes included).
 - `--dry-run`: every change is printed as `  [dry-run] would <action>`; nothing is created, not even
   `~/.claude-multi`.
-- `--relink`: only (re)create the shared + memory + plugins symlinks inside the account dirs that
-  already exist. No discovery, no aliases regeneration.
+- `--relink`: only the links and what they need: the shared + memory + plugins symlinks inside the
+  account dirs that already exist, the memory move of §16.2 (a repo that gained memory since the last
+  run), and the settings step (§13.1), so the memory allow rules of §16.3 reach every account. No
+  discovery, no aliases regeneration.
 - `--rc` / `--rc=FILE`: append the source line (§7) to the rc file, once. Without the flag the rc
   file is NEVER touched; the summary prints the line to add instead.
 - `--no-input`: never prompt (the interactive email prompt in §4 step 4 is skipped; exit 1 with the
@@ -147,7 +153,7 @@ name in `aliases.sh` — so a row with any other slug is skipped with a warning.
 ```
 # claude-multi accounts: slot<TAB>email<TAB>slug. Edit with `claude-multi-setup.sh add|remove`.
 1	alice@example.com	alice
-2	hans@betterdoc.test	hans-betterdoc
+2	hans@acme.test	hans-acme
 ```
 
 A 2-column line (`email<TAB>slug`, the v1 format) is accepted on read as a row without a slot.
@@ -157,7 +163,7 @@ changes for that email.
 Slugs: lower-cased local part, runs of non-`[a-z0-9]` → `-`, trimmed (`acct` when nothing is left,
 e.g. `_@x.test`). Among NEW emails, a slug that
 is already taken (registry, or another new email's base) gets `-<first domain label>` appended
-(`hans@betterdoc.de` → `hans-betterdoc`); if still taken, `-<slot>`. Known emails keep their slug.
+(`hans@acme.test` → `hans-acme`); if still taken, `-<slot>`. Known emails keep their slug.
 
 ## 5. Account directories and links
 
@@ -165,8 +171,9 @@ For each account: `mkdir -p` + chmod 700; for each shared name, `<acct>/<name>` 
 Link handling: correct symlink → nothing; symlink to another target → repointed (`repoint`);
 EMPTY real directory → replaced (`replace empty dir`); non-empty real file/dir → left alone with
 `warning: <path> exists and is not a symlink; left alone (move it aside, e.g. mv '<path>' '<path>.unshared', then --relink, to share it)`.
-Memory: for each `~/.claude/projects/*/memory` real dir, `mkdir -p <acct>/projects/<p>` (700) and
-link `<acct>/projects/<p>/memory` with the same rules.
+Memory (§16): for each project whose folder is in the store, `mkdir -p <acct>/projects/<p>` (700) and
+link `<acct>/projects/<p>/memory` → `~/.claude-shared/memory/<p>` with the same rules. A link that still
+points at `~/.claude/projects/<p>/memory` (made by v1.4 or earlier) is therefore repointed.
 Plugins (§14): when `~/.claude/plugins` is a real dir, link `<acct>/plugins` to it with the same rules;
 when it is not, link nothing and warn once per run: `warning: ~/.claude/plugins does not exist yet, so
 plugins are not shared; start plain claude once, then run --relink`.
@@ -240,6 +247,7 @@ Contents:
   (`found at <path>` | `not found (manual account list)`), `shared:` (`ok <dir>` | `missing`),
   `aliases:` (`ok <file>` | `missing`), `settings:` (`<n> in sync, <p> pending, <m> modified` — v1.2, §13),
   `plugins:` (`<n> shared, <o> own, <p> pending` | `<dir> missing (start plain claude once, then relink)` — v1.3, §14),
+  `memory:` (`<n> shared, <m> still in ~/.claude, <a> in one account, <c> conflicts` — v1.5, §16.4),
   `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
   `terminal:` (`default` | `<slug> (<email>)` | `unmanaged <dir>`), then
   `account: <slot> <slug> <email> <logged-in|not-logged-in>` per registered account, then
@@ -252,6 +260,19 @@ Never delete an account dir · never overwrite a seeded shared file · never mod
 `~/.claude.json` · never touch an rc file without `--rc` · never leave the cswap export on disk ·
 never migrate or copy credentials · never print tokens · a re-run with nothing new changes nothing.
 
+Two of these carry an exception, each stated where it is made:
+
+- **`~/.claude` (v1.5, §16).** `setup` and `--relink` move each `~/.claude/projects/<p>/memory` folder
+  to `~/.claude-shared/memory/<p>` and leave a symlink to it in its place. It is the first and only
+  thing the tool moves out of `~/.claude`; nothing else there is written, and `~/.claude.json` is still
+  never touched. A memory folder first created inside an account dir is moved to the store the same
+  way (§16.7); the account dir itself is still never deleted. Around both moves: never delete or
+  overwrite memory · never merge two non-empty memory folders · roll the move back when the link cannot
+  be made. The undo is one `mv` per project (§16.5).
+- **The shared `settings.json`.** The tool only ever adds to it, and only two things: the keys of
+  `settings.local.json` (§13.2) and the two memory allow rules (§16.3). Nothing the user wrote there is
+  changed or removed.
+
 ## 10. Test matrix (`tests/harness.sh`)
 
 Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a throwaway `HOME` under
@@ -262,7 +283,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 
 | # | Case | Asserts |
 |---|---|---|
-| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-betterdoc info hans-proton`, 6 symlinks each to absolute targets (5 into `~/.claude-shared`, `plugins` into `~/.claude/plugins`), shared seeded (settings byte-identical, skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
+| T1 | cswap `list --json` (4 accounts, two share local part `hans`) | 4 dirs 700, slugs `alice hans-acme info hans-mail`, 6 symlinks each to absolute targets (5 into `~/.claude-shared`, `plugins` into `~/.claude/plugins`), shared seeded (settings = the seed plus the two memory allow rules of §16.3, key order kept; skills copied, mcp.json from `~/.claude.json`, mode 600), `accounts.tsv` v2, `~/.claude` untouched, no rc change, `zsh -n` + `bash -n` on `aliases.sh` |
 | T2 | export-only cswap (`list --json` fails) | same result, source `cswap export`, no `claude-multi.*` left under `$TMPDIR` |
 | T3 | ANSI-only cswap | same result, source scraped |
 | T4 | jq + python3 shadowed with failing stubs | same 4 accounts; warning about mcp.json |
@@ -273,7 +294,7 @@ Bash harness, runs under bash 3.2 and 5, macOS and Linux. Each case builds a thr
 | T9 | second run | `No changes`, `find … -newer` finds nothing, aliases mtime unchanged; then edit the seeded `settings.json` + `CLAUDE.md`, run again → the edits survive (§9) |
 | T10 | 5th account added in cswap (`alice@other.test`) | existing 4 dirs same inodes, new slug `alice-other`, `claude5` alias, registry gains one row |
 | T11 | `--relink` after deleting one link | restored; no other change |
-| T12 | memory: repo-a (files), repo-b (empty), repo-c (no memory); alice has an empty real dir, bob a non-empty one | alice replaced, bob warned + intact, repo-c skipped, new repo picked up by `--relink` |
+| T12 | memory (rewritten for v1.5, §16): repo-a (files), repo-b (empty), repo-c (no memory); alice has an empty real dir, bob a non-empty one | repo-a and repo-b moved into `~/.claude-shared/memory` (same inode, file intact, the store mode 700) with a link left in `~/.claude`; nothing else under `~/.claude` added or removed; alice replaced and linked to the store, bob warned + intact, repo-c skipped; summary names the store; a new repo is moved and linked by `--relink` |
 | T13 | `--rc` twice with `SHELL=/bin/zsh`, then `SHELL=/bin/bash`, then `--rc=FILE`, then `SHELL=/bin/fish` | exactly one line in each target, second run `No changes`; `rc-file` holds the custom path and `status` reports `rc: sourced from` it; unknown shell → `not appended (unknown shell …)`, no rc file touched |
 | T14 | source `aliases.sh` in zsh and in bash (`eval` after sourcing for aliases) | `cwho` unpinned/pinned lines, `cuse` by slug and by slot, `cuse nonexistent` → 1, `cuse default`, launcher passes `CLAUDE_CONFIG_DIR`, `KEY=<unset>` with `ANTHROPIC_API_KEY=x` exported (`AUTH_TOKEN`/`OAUTH` `<unset>` too), flag order `--mcp-config … --settings … <args>`, shell env unchanged after, no globals left by `cwho`/`cuse`/`_claude_multi_find` |
 | T15 | `remove b@y.test`; `status` without cswap; then `remove` of an email a cswap stub still lists | row gone, launcher gone, dir still exists, message names the dir; `cswap: not found (manual account list)`; the `cswap still lists …` note |
@@ -394,7 +415,7 @@ that ran `update` still has the old file loaded. `--dry-run` reports what would 
 | # | Case | Asserts |
 |---|---|---|
 | T19 | umbrella + `CLAUDE_MULTI_ACCOUNT` in zsh and bash | `claude-multi who` ≡ `cwho`; `claude-multi use info` exports both variables; `claude-multi use default` unsets both; `claude-multi status` output ≡ script `status`; `claude-multi help` exit 0 with the verb table; `claude-multi relink` reaches `setup --relink` (stub-observable via `No changes`/`Done`) |
-| T20 | `login` with a stub `claude` (records env + args; `auth status` prints `{"loggedIn": true}` once a marker file exists in `CLAUDE_CONFIG_DIR`, else `false`) | `login info` calls `auth login --email info@corp.test` under the info dir with all three credential vars unset; `login 4` and `login hans@proton.test` resolve; `login nonexistent` → 1; `login --no-input` → 2 with the message; `--all` visits only not-logged-in accounts in slot order; a stub that exits 1 → `login did not complete`, exit 1 |
+| T20 | `login` with a stub `claude` (records env + args; `auth status` prints `{"loggedIn": true}` once a marker file exists in `CLAUDE_CONFIG_DIR`, else `false`) | `login info` calls `auth login --email info@corp.test` under the info dir with all three credential vars unset; `login 4` and `login hans@mail.test` resolve; `login nonexistent` → 1; `login --no-input` → 2 with the message; `--all` visits only not-logged-in accounts in slot order; a stub that exits 1 → `login did not complete`, exit 1 |
 | T21 | `status --verify` | states `(verified)` from the stub; without `claude` in PATH the heuristic + warning |
 | T22 | interactive offers via `CLAUDE_MULTI_INPUT` | `y` appends the rc line once (and `rc-file` records it); `n` leaves it; login offers run the stub for accepted accounts only; `--no-input` asks nothing; `--dry-run` asks nothing and writes nothing |
 | T23 | `update` with `CLAUDE_MULTI_UPDATE_URL=file://…` served through a stub `curl` in `$HOME/bin` | a newer file installs (`<old> → <new>`, mode 755, then setup runs), a second `update` says `already up to date`, a non-script download is refused and the installed copy is byte-identical afterwards, `--dry-run` installs nothing |
@@ -512,8 +533,8 @@ there only until the shared file says so too (§13, `sync --force <slug>` after 
 Why the whole directory and why a symlink: Claude Code writes into `plugins/` (installs, marketplace
 refreshes at startup, the in-use sweep). Sharing only `cache/` would leave the tool rewriting Claude
 Code's own registry files; sharing the directory makes N accounts look exactly like N terminals of one
-account, which Claude Code already supports. The canonical dir stays in `~/.claude` (as memory does):
-nothing is moved, and the default account keeps working if claude-multi is removed. The tool never
+account, which Claude Code already supports. The canonical dir stays in `~/.claude` (as memory did
+until v1.5, §16): nothing is moved, and the default account keeps working if claude-multi is removed. The tool never
 writes into `~/.claude/plugins`; sessions of the other accounts do, as they do into shared memory.
 
 Not covered: `~/.claude/plugins` absent (the default account has never started Claude Code) — nothing is
@@ -548,7 +569,7 @@ out of its own configuration — could not run Claude Code as a chosen account a
 `command not found` for a name that works perfectly when typed, which reads as a typo rather than as
 a category error.
 
-Measured 2026-09-18, with a tool whose config wanted a model command: `claude-hans-lemm-betterdoc -p`
+Measured 2026-09-18, with a tool whose config wanted a model command: `claude-<slug> -p`
 was rejected as not found, while `type` reported it as *"a shell function from
 ~/.claude-accounts/<slug>/shell-snapshots/…"*. The workaround a user reaches for is to inline what
 the function does:
@@ -603,3 +624,230 @@ belong to claude-multi alone, so there is nothing to shadow and no reason to out
 nor an interactive shell, which is exactly what cron, CI and a config-driven tool hand it.
 
 Version: 1.4.0 everywhere.
+
+## 16. v1.5 — shared memory leaves `~/.claude`
+
+Measured 2026-10-03: in an account session Claude asked for permission on every write to its
+auto-memory, although the shared settings carried allow rules for the memory paths. In one session's
+transcript every memory `Write`, `Edit` and shell append waited between 10 seconds and 4 minutes for
+its result. The 4-minute one was certainly a prompt; the shorter ones may include classifier time.
+
+The cause is documented by Claude Code. Up to v1.4 the real folder was `~/.claude/projects/<p>/memory`
+and each account's `projects/<p>/memory` was a symlink to it, so:
+
+- `.claude` is a protected directory, and "`permissions.allow` rules in settings files do not
+  pre-approve protected-path writes. The safety check runs before Claude Code evaluates allow rules
+  from settings."
+  (<https://code.claude.com/docs/en/permission-modes#protected-paths>)
+- "the permission check covers two paths: the one Claude requested and the file it resolves to." A
+  write that "resolves to a protected path that the requested path doesn't name" gets the
+  protected-path outcome of its mode, "except that where the table routes the write to the classifier,
+  this write prompts you instead."
+  (<https://code.claude.com/docs/en/permissions#symlinks>)
+- Allow rules "apply only when both the requested path and the file it resolves to match." (same section)
+
+An account session asked for `~/.claude-accounts/<slug>/projects/<p>/memory/x.md`, which is not
+protected; it resolved into `~/.claude/…`, which is; so auto mode prompted, and no allow rule could
+change that. `.claude-accounts` and `.claude-shared` are not the name `.claude`, so they are not
+protected.
+
+**Goal.** After `setup` or `--relink`, a memory write from any account session is not a protected-path
+write, and matches an allow rule on both paths. Memory stays shared across the accounts and with the
+default `~/.claude` account.
+
+### 16.1 Layout
+
+The real folder is `~/.claude-shared/memory/<p>/` ("the store"; `<p>` is Claude Code's project
+directory name). `~/.claude/projects/<p>/memory` and every `~/.claude-accounts/<slug>/projects/<p>/memory`
+are symlinks **directly** to it: one hop, never through `~/.claude`. Only the folder is linked, never a
+file inside it: the Edit and Write tools refuse a path that is itself a symlink. The store directory is
+created mode 700 when the first folder moves in (memory is private notes); a store that already exists
+keeps its mode.
+
+### 16.2 Migration (`setup` and `--relink`, idempotent)
+
+Per project, where a project is anything with a `memory` entry under `~/.claude/projects/`, a folder
+in the store, or files in a registered account's own memory folder (§16.7). A name that contains a
+newline or any other control character is not a project and is left where it is: a name is one line in
+the tool's lists and one path component everywhere else.
+
+| `~/.claude/projects/<p>/memory` | Store `~/.claude-shared/memory/<p>` | Action |
+|---|---|---|
+| real dir | absent, or an empty dir | `move`: the folder is renamed into the store (an empty store dir is removed first), then a link is left behind. If the link cannot be made, the folder is moved back and the run stops with `error: cannot link … the folder was moved back to …` |
+| empty real dir | present | `replace empty dir`: the empty dir becomes a link |
+| non-empty real dir | present, non-empty | conflict: nothing changes for that project, account links included; `warning: memory conflict: <seed> and <store> both hold files; …` names both paths |
+| link to the store | present | nothing. "To the store" means the link lands on the store folder (`-ef`), however it is spelled: a link made by hand with a trailing slash or a relative path counts |
+| link to the store | absent | left alone, warned (the link dangles) |
+| link elsewhere | any | left alone, warned; the accounts are linked to the store only if its folder exists |
+| absent | present | when `~/.claude/projects/<p>` exists, the link is created there; that directory is never created by the tool, so the default account gets its link on the first run after it has used the repo |
+
+Account links, per project that came out of the table without a conflict: absent → created; a link to
+the old `~/.claude/projects/<p>/memory` → repointed to the store (`repoint … (was …)`); an empty real
+dir → replaced; a non-empty real dir is that account's own memory for the repo. When nothing shared
+holds files yet it is adopted (§16.7). Otherwise it is left alone with `warning: <path> holds this
+account's own memory for that repo, and <store> holds the shared one; left alone, …`, which says to
+move its files into the store by hand. It is deliberately not §5's `mv … .unshared` hint: moved aside,
+those notes would be hidden from Claude rather than shared. A machine where a project was
+already moved by hand, with `~/.claude` and the accounts linking to the store, therefore comes out as
+`No changes`.
+
+The move is a rename inside `$HOME`, so a session that is running keeps working: every path it holds
+still resolves, through the link left behind. `update` ends in `setup --no-input` (§12.5), so the first
+`update` to v1.5 performs the migration; `update --dry-run` installs nothing and moves nothing.
+
+### 16.3 Allow rules
+
+The shared `settings.json` must allow both paths of a memory write:
+
+```
+Edit(~/.claude-accounts/*/projects/*/memory/**)     the path the account session asks for
+Edit(~/.claude-shared/memory/**)                    the file it resolves to
+```
+
+The settings step (run by `setup`, `--relink` and `sync`) adds whichever of the two is missing to the
+end of `permissions.allow` in `~/.claude-shared/settings.json`, reported as `allow memory writes in
+<file> (two Edit rules in permissions.allow)`. No other key or entry changes: it is the §13.2
+deepmerge, whose array union keeps existing entries and their order (the file is re-serialised by jq
+or python3, so its whitespace may change). Presence is a text test for the
+two rule strings, so it needs no JSON tool, and a user who moved a rule to `deny` or `ask` is not
+fought. Without jq and python3, or with a file that is not valid JSON, the rules cannot be merged: the
+file is left untouched and a warning prints both rules to add by hand.
+
+They have to reach every account's effective settings. The launcher path gets them through
+`--settings`. On the `cuse` path each account's own `settings.json` is the §13.1 copy, so an untouched
+copy and one the tool wrote pick the rules up from the normal sync. A copy that is **modified** is not
+overwritten (§13.1), so for it the decision is: **the same two rules are merged into that copy,
+additively**, rather than printing a `sync --force <slug>` hint. A hint would leave the prompts in
+place until the user gave up their own `/config` edits; the merge loses nothing of theirs, and the copy
+stays `modified` and keeps being reported as such.
+
+### 16.4 Output
+
+`--dry-run` prints `[dry-run] would move <seed> to <store>`, `[dry-run] would link <seed> -> <store>`
+and the account link lines, and writes nothing. The summary reads `Shared memory:
+~/.claude-shared/memory/<repo>, linked from ~/.claude/projects/<repo>/memory and from each account's
+projects/<repo>/memory (…)`. `status` prints, between `plugins:` and `rc:`,
+
+```
+memory: <n> shared, <m> still in ~/.claude, <a> in one account, <c> conflicts
+```
+
+counting projects, each in exactly one bucket: *shared* = the folder is in the store and `~/.claude`
+links to it or has no entry; *still in `~/.claude`* = a real folder the next `setup` or `--relink` will
+move (or an empty one it will replace); *in one account* = memory that exists only inside one account
+and will be adopted by the next run (§16.7); *conflicts* = what the tool leaves for a human: two places
+hold files for the same repo (`~/.claude` and the store, two accounts, or an account next to the shared
+folder), a link that points elsewhere, a dangling link. A second run prints `No changes — everything was already in place.`
+
+### 16.5 Undo
+
+Per project, with no session of any account open in that repo:
+
+```
+rm ~/.claude/projects/<p>/memory                          # the link, not a folder
+mv ~/.claude-shared/memory/<p> ~/.claude/projects/<p>/memory
+```
+
+The account links then dangle until they are pointed back at `~/.claude/projects/<p>/memory` by hand; a
+later `setup` or `--relink` moves the folder into the store again. Removing `~/.claude-shared` without
+doing this first deletes the memory, which the README's Uninstall section says in so many words.
+
+### 16.6 Checks on a real Claude Code
+
+The Claude Code docs give no worked example of this layout, so the three statements below were
+inferences from §16's quotes, and the harness cannot test them: it has no Claude Code. Moving a real
+memory folder or editing a real settings file is also refused to an agent session in auto mode
+("Self-Modification"), so the migration was run by the owner, in a terminal, and each check is recorded
+here.
+
+Run 2026-10-03 on Claude Code 2.1.288, on a machine with four accounts. The migration moved 9 folders
+out of `~/.claude` and adopted 6 from one account (§16.7) with no conflict; every link then pointed
+straight at the store, the adopted folders held the files they held before, and a second run printed
+`No changes`. A repo that gained memory afterwards was moved by `--relink`, and the checks were run in
+that repo, so every write below went through a link into the store. "No prompt" is what the owner saw;
+the time is the wait between the tool call and its result in the session transcript.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | An account session writes and edits a memory file through its own path with no prompt, in auto mode and in default mode, with the two rules present | **Passed.** Auto mode: `Write` and `Edit`, no prompt, 0.2 s each. Default mode: the same, no prompt, 0.1 s each. Default mode is where an edit that no rule covers asks, so the two rules matched on both paths |
+| 2 | Plain `claude` on the default account still writes memory without a prompt now that its memory path is a link out of `~/.claude` (the built-in exemption for the memory folder is undocumented) | **Passed in auto mode; not tested in default mode.** `Write` through `~/.claude/projects/<p>/memory`, a link to the store: no prompt, 2.3 s. The same write into the real folder, before it was moved, took 0.2 s. That fits the write no longer taking a built-in fast path and being decided by the auto-mode classifier instead, which is an inference from the timing: the transcript does not record it. Default mode has no classifier, so what plain `claude` does there is unknown |
+| 3 | A shell append (`>>`) to a memory file from an account session does not prompt | **Passed.** Auto mode: `>>` through the account's own path, no prompt, 1.0 s |
+
+Before the move, the same kind of write from an account session waited between 10 seconds and 4
+minutes (§16, first paragraph).
+
+The fallback for a failed check 1 was the `autoMemoryDirectory` setting
+(<https://code.claude.com/docs/en/memory#storage-location>). It replaces the per-project folder, so set
+in the shared file it would give every project one folder; it only works per project. Check 1 passed,
+so it is not built. The open item is check 2 in default mode, and the README says so: the accounts are
+the tool's purpose, and they are what was verified.
+
+### 16.7 Adoption of memory first created inside an account
+
+Up to v1.4 only folders in `~/.claude` were shared, so a repo first used through an account was never
+shared: its memory stayed a real folder inside that account. Decided 2026-10-03, after the first dry
+run on a real machine showed six such repos in one account: they are adopted, in v1.5.
+
+Per project, when neither `~/.claude` nor the store holds files for it yet (the §16.2 state is not a
+conflict, a link elsewhere or a dangling link, the store folder is absent or empty, and `~/.claude` has
+no folder or an empty one), the accounts' own real, non-empty `projects/<p>/memory` folders decide.
+"Accounts" means the registered ones (`setup`: the account list of this run; `--relink` and `status`:
+`accounts.tsv`), whose slugs §4 validates. A directory that merely sits under `~/.claude-accounts` is
+never a source: the first allow rule of §16.3 lets a session create one there, and a move must not be
+steerable by a directory name.
+
+| Accounts holding files | Action |
+|---|---|
+| none | nothing to adopt; the §16.2 table alone applies |
+| exactly one | that folder is moved into the store (`move <account folder> to <store>`, an empty store dir removed first) and a link is left in the account, with the same rollback as §16.2. `~/.claude` is then judged against a store that holds it: an empty real dir there is replaced by a link, a missing entry is linked when `~/.claude/projects/<p>` exists. Every other account is linked |
+| two or more | never merged: nothing changes for that project, and `warning: memory conflict: <n> accounts each hold their own memory for <p> and nothing is shared yet (<paths>); …` names every folder |
+
+An **empty** folder in an account holds no memory and is not adopted, and creates nothing: on the
+machine measured, accounts held empty memory folders for repos (and for a temporary job directory)
+where nothing was ever written, and adopting those would give every account a project dir for each of
+them. So a repo is shared from the first run
+after one account has written memory in it; if a second account writes its own before that run, the
+two-or-more row applies. `--dry-run` prints the same lines a real run does (the `~/.claude` side is
+judged as if the adopted folder were already in the store).
+
+Adoption crosses accounts on purpose: memory belongs to the repo, and whoever opens the repo with
+another account now sees the notes the first account wrote there.
+
+The function that moves a folder (the §16.2 move and this one) refuses any path that is not a real,
+non-link directory ending in `projects/<p>/memory`, whatever built the path. It is the last line of
+defence, not the first: the path it is given is an account slug from the registry plus a project name
+that passed the check above, never a piece cut out of a joined string.
+
+### 16.8 What the move gives up
+
+Before v1.5 an account's memory write stopped at a permission prompt. That was the defect, and it was
+also a review step. Now such a write is pre-approved. Two consequences, stated because they are the
+price of the fix:
+
+- Memory is read back into later sessions. Anything that can make a session write memory (a prompt
+  injection in a file or a web page, for instance) can leave text for future sessions of every account,
+  without a prompt in between.
+- The two rules of §16.3 are not scoped to the repo a session runs in: a session in one repo may write
+  the memory of another. A shared settings file has no way to name "this project", so the breadth comes
+  with the approach.
+
+A user who wants the prompt back moves the two rule strings from `permissions.allow` to
+`permissions.ask` in the shared file (and in any account copy `status` counts as modified): the
+presence test of §16.3 then finds them and adds nothing.
+
+### 16.9 Tests
+
+| # | Case | Asserts |
+|---|---|---|
+| T12 | rewritten, see §10 | the new layout end to end; bob's own folder next to the shared one gets the memory warning (names the store, no `.unshared` hint) and counts as a conflict in `status` |
+| T28 | the §16.2 table, one project per row, one run, alice with a v1.4 link into the conflicting project | `status` before: `memory: 2 shared, 3 still in ~/.claude, 0 in one account, 3 conflicts`; each row's action and nothing more (moved file intact, empty dir replaced, both conflict sides intact and nothing merged, both paths in the warning, alice's link into the conflict not repointed, the link elsewhere and the dangling link untouched and warned with nothing created for them, an empty store dir not blocking the move, a store-only project linked from `~/.claude`); `status` after: `5 shared, 0 still in ~/.claude, 0 in one account, 3 conflicts`; a second run is `No changes` and still warns; with a failing `ln` in `PATH` the run exits 1, the folder is back in `~/.claude`, nothing is left in the store, the error says `moved back`; once `ln` works the move goes through |
+| T29 | upgrade from the v1.4 layout: real folders in `~/.claude`, account links to them | `--dry-run` prints the `would move`, `would link` and `would repoint … (was …)` lines, no `+` line, same tree, nothing modified; then the move, every account link straight to the store, none through `~/.claude`, the files readable through each path; `status` `2 shared`; a second `setup` and a `--relink` are `No changes` and modify nothing |
+| T30 | two projects moved by hand: `~/.claude` and both accounts already link to the store, one `~/.claude` link spelled with a trailing slash | `setup` and `--relink` are `No changes`, nothing modified, same store inode, no warning, the oddly spelled link left as it is; `status` counts both as shared |
+| T31 | the allow rules | the shared file gains both rules after the seeded one, every other key as seeded and in order, mode 600, each rule once; the account copies carry them; `~/.claude/settings.json` is not edited; a second run is `No changes`; a shared file that has one rule gains only the other, at the end, and `--relink` delivers it to the accounts; a modified account copy keeps its own rule and key, gains the two rules, is still reported and counted as modified, and gains them once; a shared file that carries the two rules under `permissions.ask` is left byte-identical and the synced copy's allow list gains nothing; without jq and python3 the warning names both rules and the shared file is byte-identical |
+
+| T32 | adoption (§16.7), one project per row: only alice has memory; alice plus an empty folder in `~/.claude`; alice and bob both; alice while the store holds files; alice with an empty folder only; alice plus an empty store folder `~/.claude` links to | `status` before: `0 shared, 0 still in ~/.claude, 3 in one account, 2 conflicts`; `--dry-run` prints the account folder's `would move` and `would link`, `would replace empty dir` for the empty `~/.claude` folder (and no `would move` for it), bob's `would link`, and modifies nothing; then alice's folder is the store folder (same inode), she and bob link to it, no project dir is made in `~/.claude`; the empty `~/.claude` folder became a link; with two holders both folders are intact, no store folder exists and the warning names both; with a full store alice's folder is intact, nothing is merged, bob is linked; an empty folder is not adopted and creates nothing; an empty store folder does not block adoption and the `~/.claude` link to it stays valid; `status` after: `3 shared, …, 0 in one account, 2 conflicts`; a second run is `No changes`; with a failing `ln` the run exits 1 and the folder is back in the account; a directory under `~/.claude-accounts` that is no registered account is not adopted from, one whose name is a real slug, a newline and more text does not get that account's directory moved (same inode, nothing in the store), a project name with a newline is left where it is, and `status` counts none of them |
+
+T1–T3 assert the shared `settings.json` as "the seed plus the two rules", T16 and T21 the `memory:` line
+and its place in the order.
+
+Version: 1.5.0 everywhere.

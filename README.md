@@ -60,7 +60,7 @@ never copies a login.
 | `claude-multi sync [--force [slug]] [--merge-local]` | copy the shared `settings.json` into every account's own file (permissions, auto mode, hooks); `--force` overwrites a copy edited through `/config`; `--merge-local` folds `~/.claude/settings.local.json` into the shared file first |
 | `claude-multi update [--dry-run]` | download the latest script from GitHub (`CLAUDE_MULTI_REF` picks a branch or tag), install it and re-run setup so `aliases.sh` gains any new commands |
 | `claude-multi setup [--dry-run] [--rc[=FILE]] [--no-input]` | (re)run setup; `claude-multi help` lists the verbs, `~/.claude-multi/claude-multi-setup.sh --help` the flags |
-| `claude-multi relink` | recreate the shared + memory + plugins symlinks inside the existing account dirs (a repo that gained memory later; an account that moved its own `plugins/` aside) |
+| `claude-multi relink` | recreate the shared + memory + plugins symlinks inside the existing account dirs, move a repo's new memory folder into `~/.claude-shared/memory`, and re-sync the settings (a repo that gained memory later; an account that moved its own `plugins/` aside) |
 | `claude-multi help` | the verb table |
 
 `claude-multi` is a shell function defined in `aliases.sh`, so it needs a sourced terminal; the
@@ -102,14 +102,14 @@ no separate process can do.
 | `settings.json` | `~/.claude-shared/settings.json` | passed as `--settings` by the launchers; also copied into each account's own `settings.json` by setup / `claude-multi sync`, so bare `claude` after `cuse` has the same permissions and auto mode |
 | MCP servers (`mcp.json`) | `~/.claude-shared/mcp.json` | passed as `--mcp-config` (merged with the account's own) |
 | `CLAUDE.md`, `commands/`, `agents/`, `skills/`, `output-styles/` | `~/.claude-shared/<name>` | symlinked into every account dir |
-| Per-repo auto-memory | `~/.claude/projects/<p>/memory/` | symlinked into every account (`projects/<p>/memory`) |
+| Per-repo auto-memory | `~/.claude-shared/memory/<p>/` | the real folder; `~/.claude/projects/<p>/memory` and every account's `projects/<p>/memory` are symlinks to it |
 | Login / credentials | `~/.claude-accounts/<slug>/` (+ Keychain on macOS) | per account, never copied |
 | `.claude.json` (sessions, per-project trust, `claude mcp add` servers) | per account dir | per account |
 | Plugins (`plugins/`: installed set, marketplaces, cache) | `~/.claude/plugins` | symlinked into every account, once the default account has started Claude Code; which plugins are enabled comes from the shared `settings.json` |
 | history, sessions | per account dir | per account |
 | Trust dialog per repository | each account's `.claude.json` | per account; accept once per repo per account |
 | `claude agents` fleet view, background jobs, `/tasks`, `--resume`, the daemon | per account dir | per account — Claude Code keeps that registry inside the config dir, so a view opened as one account lists only that account's sessions and jobs; `cswap list` still shows every running instance, because it scans processes rather than a registry |
-| `~/.claude`, `~/.claude.json` | the default account | never modified; read once as the seed for `~/.claude-shared` |
+| `~/.claude`, `~/.claude.json` | the default account | read once as the seed for `~/.claude-shared`; never modified, with one exception: per-repo memory folders move out and a link stays behind (see "Memory is shared") |
 
 ## Permissions, auto mode and prompts
 
@@ -129,6 +129,21 @@ Two things decide whether a session prompts you:
   into that account's own `settings.json`, after which every Bash command the shell parser cannot
   analyse (`node -e`, sed with braces) prompts, in every permission mode, workflow subagents included,
   until the key is removed and the session restarted. `setup`, `sync` and `status` warn when they see it.
+- **Memory writes need two allow rules, and setup adds them.** `Edit(~/.claude-accounts/*/projects/*/memory/**)`
+  covers the path an account session asks for and `Edit(~/.claude-shared/memory/**)` the file it
+  resolves to; Claude Code applies an allow rule to a symlinked path only when both match. Setup,
+  `relink` and `sync` append whichever is missing to `permissions.allow` in the shared file and change
+  no other key or entry there. A copy you edited inside an account is still not overwritten, but it gains these
+  two rules too. This needs `jq` or `python3`; without them a warning prints the two rules to add by hand.
+  Checked on Claude Code 2.1.288: an account session writes, edits and appends to memory without a
+  prompt, in auto mode and in default mode. Plain `claude` on the default account, whose memory path is
+  now a link out of `~/.claude`, was not prompted in auto mode; in default mode it has not been tested
+  and may ask.
+  What it gives up: a memory write from an account session used to stop at a prompt, and now it does
+  not, in any repo, for any repo's memory. Memory is read back into later sessions, so if you would
+  rather review those writes, move the two rules from `permissions.allow` to `permissions.ask` in
+  `~/.claude-shared/settings.json` (and in any account copy `status` counts as modified); setup sees
+  them there and adds nothing.
 - **Trust is per account per repository.** The trust dialog answer lives in each account's
   `.claude.json`, which the tool never touches, so accept it once per repo in each account; until then
   that repo's `.claude/settings.json` allow rules are ignored ("this workspace has not been trusted").
@@ -189,9 +204,23 @@ or replace it with your own script, if you already have one. An unpinned session
   `claude-multi login <slug>` runs `claude auth login --email <email>` with `CLAUDE_CONFIG_DIR` set to
   that account's dir and confirms the result with `claude auth status`; `/login` inside
   `claude-<slug>` does the same thing by hand.
-- **Memory is shared.** For every `~/.claude/projects/<p>/memory/` that exists, each account gets a
-  symlink to it. The canonical folder stays in `~/.claude`; nothing is moved. `claude-multi relink`
-  picks up a repo that gained memory later.
+- **Memory is shared, and lives outside `~/.claude`.** The real folder for a repo is
+  `~/.claude-shared/memory/<p>/`; `~/.claude/projects/<p>/memory` and every account's
+  `projects/<p>/memory` are symlinks straight to it. Setup **moves** each memory folder it finds in
+  `~/.claude` into that store and leaves a link behind — the one thing claude-multi moves out of
+  `~/.claude`. The reason is Claude Code's own rule: `.claude` is a protected directory, a write that
+  resolves into it asks for permission, and no allow rule can pre-approve it. While the folder stayed
+  in `~/.claude`, every memory write from an account session prompted. The move never deletes or
+  overwrites memory and never merges two folders: if both `~/.claude` and the store hold files for
+  the same repo, nothing changes and a warning names both paths. Memory first created inside one
+  account (a repo you only ever opened with that account) is adopted the same way: that folder becomes
+  the shared one, and the other accounts see it from then on. If two accounts each wrote their own
+  before that, nothing is merged and the warning names both folders. `claude-multi setup --dry-run`
+  shows the `would move …` lines first; `claude-multi status` prints `memory: <shared>, <still in
+  ~/.claude>, <in one account>, <conflicts>`; `claude-multi relink` picks up a repo that gained memory
+  later. To undo it for one
+  repo, with no session open in it: `rm ~/.claude/projects/<p>/memory` (that is the link), then
+  `mv ~/.claude-shared/memory/<p> ~/.claude/projects/<p>/memory`.
 - **Plugins are shared.** Each account's `plugins/` is a symlink to `~/.claude/plugins`, so every account
   has the same installed plugins, marketplaces and cache, including plugins a repository enables in its
   `.claude/settings.json`; the shared `settings.json` says which are on. Claude Code writes into that
@@ -199,7 +228,9 @@ or replace it with your own script, if you already have one. An unpinned session
   `~/.claude/plugins` does not exist yet, start plain `claude` once, then `claude-multi relink`.
 - **Idempotent and safe.** A re-run with nothing new prints `No changes — everything was already in
   place.` and leaves the filesystem byte-identical. The tool never deletes an account dir, never
-  overwrites a seeded shared file, never modifies `~/.claude` or `~/.claude.json`, never touches an
+  overwrites a seeded shared file (it only appends the two memory allow rules to the shared
+  `settings.json`), never modifies `~/.claude` or `~/.claude.json` apart from moving the memory folders
+  out as described above, never deletes or overwrites memory, never touches an
   rc file without `--rc` or your `y` at the prompt, never leaves the cswap export on disk, never
   migrates credentials, never prints tokens. `--dry-run` prints every change and creates nothing, not
   even `~/.claude-multi`. `update` refuses a download that is not this script and leaves the
@@ -269,25 +300,41 @@ data; delete it when you no longer want it. Until the default account has starte
   `claude auth login` / `claude auth status` subcommands
 - `curl` or `wget` for `claude-multi update`
 - Optional: `cswap` for automatic account discovery; `jq` or `python3` to extract MCP servers from
-  `~/.claude.json` (without them `mcp.json` is seeded empty with a warning)
+  `~/.claude.json` (without them `mcp.json` is seeded empty with a warning) and to add the two memory
+  allow rules to the shared `settings.json` (without them a warning prints the rules to add by hand)
 
 ## Uninstall
 
 1. Remove the rc line from `~/.zshrc` / `~/.bashrc` (or the `--rc=FILE` you chose):
    `[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"`
 2. `rm -rf ~/.claude-multi` (script, aliases, account registry).
-3. `rm -rf ~/.claude-shared` — only if you do not want the shared settings, MCP config and CLAUDE.md
-   any more; they are copies, the originals in `~/.claude` are untouched.
-4. `~/.claude-accounts/<slug>/` holds each account's login and sessions (`plugins` is a symlink into
+3. **Move the memory back first.** `~/.claude-shared/memory/` holds the only copy of every repo's
+   auto-memory; `~/.claude/projects/<p>/memory` is a link to it. With no Claude Code session open:
+
+   ```sh
+   for d in "$HOME"/.claude-shared/memory/*/; do
+     d=${d%/}; l="$HOME/.claude/projects/${d##*/}/memory"
+     [ -L "$l" ] && rm "$l"                    # the link the tool left behind
+     [ -e "$l" ] || { mkdir -p "${l%/memory}" && mv "$d" "$l"; }
+   done
+   ```
+
+   Anything still in `~/.claude-shared/memory/` afterwards was not moved (a real folder was already in
+   the way); look at it before the next step. The accounts' own `projects/<p>/memory` links now point
+   at nothing; they go away with the account dirs in step 5.
+4. `rm -rf ~/.claude-shared` — only after step 3, and only if you do not want the shared settings, MCP
+   config and CLAUDE.md any more; those are copies, the originals in `~/.claude` are untouched.
+5. `~/.claude-accounts/<slug>/` holds each account's login and sessions (`plugins` is a symlink into
    `~/.claude`, so removing the account dir removes no plugin). Delete a directory
    only when you are done with that account (on macOS, also remove its `Claude Code-credentials`
    Keychain entry). The tool itself never deletes these.
 
-`~/.claude` and `~/.claude.json` were never modified, so the default account keeps working.
+Apart from the memory folders, `~/.claude` and `~/.claude.json` were never modified, so the default
+account keeps working.
 
 ## Development
 
-- `tests/harness.sh` — the test matrix (T1–T26 in the contract); builds a throwaway `HOME` per case
+- `tests/harness.sh` — the test matrix (T1–T31 in the contract); builds a throwaway `HOME` per case
   with a stub `claude` and a stub `cswap`. Run it with `/bin/bash tests/harness.sh` (bash 3.2 on
   macOS) and with `bash tests/harness.sh`.
 - CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -S warning -s bash` on the script and
