@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claude-multi-setup.sh — one Claude Code login per terminal.
 #
-# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12–§16 of it).
+# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12–§17 of it).
 #
 # Produces:
 #   ~/.claude-accounts/<slug>/          one CLAUDE_CONFIG_DIR per account (own login, own Keychain entry, own
@@ -19,6 +19,8 @@
 #   ~/.claude-multi/claude-multi-setup.sh   self-installed copy of this script (the stable path)
 #   <account>/projects/<repo>/memory -> ~/.claude-shared/memory/<repo>   per-repo auto-memory, shared (one hop)
 #   <account>/plugins -> ~/.claude/plugins   one installed plugin set, marketplace list and cache for every account (v1.3)
+#   ~/.claude/<dir>/<entry> -> ~/.claude-shared/<dir>/<entry>   a link for every shared command, agent, skill and
+#                                       output style the default account has no name for (v1.6, §17)
 #
 # Sharing model: CLAUDE.md + the four directories are SYMLINKED into every account dir (Claude only reads
 # them). settings.json and mcp.json are passed as --settings / --mcp-config flags, never symlinked, because
@@ -27,6 +29,9 @@
 # are what several terminals of one account already are, and the canonical dir never moves.
 # Memory is the one thing that DOES move (§16): `.claude` is a protected directory in Claude Code, so a write that
 # resolves into it prompts whatever the allow rules say. The folder leaves ~/.claude and a link stays behind.
+# The default account follows the shared folders (§17): the seeding is a one-time COPY, so an entry added to a
+# shared folder later reached every account and never ~/.claude. setup, --relink, `link-default`, every launcher
+# and `cuse` give ~/.claude a link to each such entry. Links are only ever added; nothing there is moved or changed.
 #
 # Discovery: $ACCOUNT_ROWS if set, else cswap (`list --json`, `export <tmp>`, ANSI-stripped `list`), then the
 # union with accounts.tsv rows that carry a slot, then an interactive prompt (reads /dev/tty), then an error.
@@ -46,7 +51,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.5.0"
+VERSION="1.6.0"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -77,7 +82,7 @@ SLOT_RE='^[0-9]+$'
 SLUG_RE='^[a-z0-9][a-z0-9-]*$'   # a slug is a path component AND a shell function name: nothing else gets in
 TAB=$(printf '\t')
 
-CMD=""            # setup | add | remove | status | login | update | sync
+CMD=""            # setup | add | remove | status | login | update | sync | link-default
 EMAIL_ARG=""      # add/remove operand
 SLOT_ARG=""       # add --slot N
 LOGIN_ARG=""      # login operand: slug | slot | email
@@ -124,6 +129,7 @@ usage:
   $SCRIPT_NAME login <slug|slot|email> | --all
   $SCRIPT_NAME update [--dry-run]
   $SCRIPT_NAME sync [--force [<slug>]] [--merge-local] [--dry-run]
+  $SCRIPT_NAME link-default [--dry-run]
   $SCRIPT_NAME --help | -h | --version
 
 commands:
@@ -141,11 +147,15 @@ commands:
   sync           copy the shared settings.json into each account's own settings.json (so bare `claude` after `cuse`
                  gets the same permissions and auto mode); --force [slug] overwrites copies edited via /config;
                  --merge-local folds ~/.claude/settings.local.json into the shared file first
+  link-default   give ~/.claude (the default account) a link to every shared command, agent, skill and output
+                 style it has no name for; setup, --relink, every launcher and `cuse` run it too. Links are only
+                 added, nothing in ~/.claude is moved or changed. CLAUDE_MULTI_DEFAULT_LINKS=0 turns it off
 
 flags:
   --dry-run      print every change as '[dry-run] would …'; create nothing
   --relink       only the links and what they need: the shared + memory + plugins symlinks in the account dirs
-                 that already exist, the move of new memory folders out of ~/.claude, and the settings sync
+                 that already exist, the move of new memory folders out of ~/.claude, the default account's
+                 links to new shared entries, and the settings sync
   --rc[=FILE]    append the source line to the rc file (by \$SHELL, or FILE), once; never touched otherwise
   --no-input     never prompt (scripted / AI-driven runs); exit 1 with instructions instead
 
@@ -215,6 +225,78 @@ install_file() { # tmp dest mode what
 link_shared_into() { # account-dir
   local n
   for n in $SHARED_LINKS; do ensure_link "$1/$n" "$SHARED_DIR/$n"; done
+}
+
+# ---------- the default account follows the shared folders (§17) ----------
+# ~/.claude-shared/<dir> was seeded by copying ~/.claude/<dir> ONCE. Every account sees the shared folder itself, so
+# an entry added to it later (a skill, a plugin scaffolded there, a command) reaches every account and never the
+# default one. This pass closes the gap from the shared side: an entry ~/.claude/<dir> has no name for gets a link
+# there, and a folder ~/.claude does not have at all becomes one link to the shared folder. It never moves,
+# overwrites or repoints anything in ~/.claude; the one thing it removes is a link it made whose shared entry is
+# gone. CLAUDE_MULTI_DEFAULT_LINKS=0 turns it off, here and in status.
+default_links_enabled() { [ "${CLAUDE_MULTI_DEFAULT_LINKS:-1}" != 0 ]; }
+link_shared_into_default() {
+  local d src dst p name
+  default_links_enabled || return 0
+  [ -d "$SEED_DIR" ] || return 0
+  for d in $SHARED_SUBDIRS; do
+    src="$SHARED_DIR/$d"; dst="$SEED_DIR/$d"
+    [ -d "$src" ] || continue
+    # a link already: the whole shared folder (made below), or wherever the user pointed it — nothing to add to
+    [ -L "$dst" ] && continue
+    if [ ! -e "$dst" ]; then
+      dir_empty "$src" && continue
+      did "link $dst -> $src"
+      dry || ln -s -- "$src" "$dst" || warn "cannot link $dst; the default account does not see $src"
+      continue
+    fi
+    [ -d "$dst" ] || continue
+    for p in "$dst"/* "$dst"/.[!.]* "$dst"/..?*; do
+      # only a link this pass made (its target is the shared entry of its own name) that now leads nowhere
+      [ -L "$p" ] && [ ! -e "$p" ] && [ "$(readlink -- "$p")" = "$src/${p##*/}" ] || continue
+      did "remove $p (the shared entry it pointed at is gone)"
+      dry || rm -f -- "$p" || warn "cannot remove $p"
+    done
+    for p in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+      # -e is false for an unmatched pattern and for an entry that leads nowhere; a shared entry that is a link
+      # back into this folder is one of those when its name is missing here, and linking it would loop
+      [ -e "$p" ] || continue
+      name=${p##*/}
+      [ "$name" = .DS_Store ] && continue
+      if [ -e "$dst/$name" ] || [ -L "$dst/$name" ]; then continue; fi
+      did "link $dst/$name -> $p"
+      dry || ln -s -- "$p" "$dst/$name" || warn "cannot link $dst/$name; the default account does not see $p"
+    done
+  done
+}
+# A re-seed (the user removed ~/.claude-shared/<dir>) copies ~/.claude/<dir>, links included: a link of the pass
+# above would land in the new shared folder pointing at itself. Those are dropped; every other entry is kept.
+drop_self_links() { # dir
+  local p
+  for p in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -L "$p" ] && [ "$(readlink -- "$p")" = "$1/${p##*/}" ] && rm -f -- "$p"
+  done
+  return 0
+}
+default_status_line() { # default: <n> linked, <p> pending | default: off (…) | default: <dir> missing
+  local d src dst p name n=0 pend=0
+  if ! default_links_enabled; then printf 'default: off (CLAUDE_MULTI_DEFAULT_LINKS=0)\n'; return 0; fi
+  if [ ! -d "$SEED_DIR" ]; then printf 'default: %s missing\n' "$SEED_DIR"; return 0; fi
+  for d in $SHARED_SUBDIRS; do
+    src="$SHARED_DIR/$d"; dst="$SEED_DIR/$d"
+    [ -d "$src" ] || continue
+    for p in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+      [ -e "$p" ] || continue
+      name=${p##*/}
+      [ "$name" = .DS_Store ] && continue
+      if [ -L "$dst" ]; then
+        [ "$dst" -ef "$src" ] && n=$((n + 1))
+      elif [ -L "$dst/$name" ] && [ "$(readlink -- "$dst/$name")" = "$p" ]; then n=$((n + 1))
+      elif [ ! -e "$dst/$name" ] && [ ! -L "$dst/$name" ]; then pend=$((pend + 1))
+      fi
+    done
+  done
+  printf 'default: %s linked, %s pending\n' "$n" "$pend"
 }
 
 # ---------- shared memory (§16): the real folder is ~/.claude-shared/memory/<p>, outside ~/.claude ----------
@@ -581,6 +663,7 @@ seed_shared() {
     if [ -d "$SEED_DIR/$d" ]; then
       did "seed $SHARED_DIR/$d/ (copy of $SEED_DIR/$d/)"
       dry || cp -R -- "$SEED_DIR/$d" "$SHARED_DIR/$d" || die "cannot copy $d"
+      dry || drop_self_links "$SHARED_DIR/$d"
     else
       did "create empty $SHARED_DIR/$d/ (no $SEED_DIR/$d/ to copy)"
       dry || mkdir -p -- "$SHARED_DIR/$d" || die "cannot create $d"
@@ -1027,7 +1110,8 @@ gen_aliases() { # → stdout
 #
 # One Claude Code login per terminal. Every account owns a CLAUDE_CONFIG_DIR under ~/.claude-accounts, which
 # relocates the whole ~/.claude tree, .claude.json AND the macOS Keychain credential entry. ~/.claude itself
-# stays the default account; only its per-repo memory folders move, to ~/.claude-shared/memory (a link stays).
+# stays the default account; only its per-repo memory folders move, to ~/.claude-shared/memory (a link stays),
+# and it is given a link to each shared command, agent, skill and output style it has no name for.
 #
 #   claude-<slug> [args…]   run Claude Code as that account, for this command only, with the shared
 #                           ~/.claude-shared/settings.json + mcp.json and ANTHROPIC_API_KEY removed
@@ -1117,6 +1201,12 @@ _claude_multi_run() { # <slug> [args…]
   "$launcher" "$@"
 }
 
+# §17: the default account gets a link to every shared entry it lacks. Silent, and never in the way of a switch.
+_claude_multi_follow() {
+  [ -x "$CLAUDE_MULTI_SETUP" ] && "$CLAUDE_MULTI_SETUP" link-default >/dev/null 2>&1
+  return 0
+}
+
 cuse() { # <slug|slot|default>
   local want="${1:-}" line rest slot slug email
   if [ -z "$want" ]; then
@@ -1127,6 +1217,7 @@ cuse() { # <slug|slot|default>
   case "$want" in
     default | off | -)
       unset CLAUDE_CONFIG_DIR CLAUDE_MULTI_ACCOUNT
+      _claude_multi_follow
       printf '%s\n' 'This terminal: default (~/.claude)'
       return 0 ;;
   esac
@@ -1139,6 +1230,7 @@ cuse() { # <slug|slot|default>
   slot=${line%% *}; rest=${line#* }; slug=${rest%% *}; email=${rest#* }
   export CLAUDE_CONFIG_DIR="$CLAUDE_MULTI_ACCOUNTS_ROOT/$slug"
   export CLAUDE_MULTI_ACCOUNT="$slug"
+  _claude_multi_follow
   printf '%s\n' "This terminal: $slug ($email)  CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"
   _claude_multi_logged_in "$slug" || printf '%s\n' "  not logged in yet: run  claude-multi login $slug"
   [ -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && printf '%s\n' "  note: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN is set in this shell — bare 'claude' will use it over the login; claude-$slug unsets them"
@@ -1187,6 +1279,7 @@ claude-multi() { # <verb> [args…] — a function, so `use` can change THIS she
         '  relink                only the shared + memory + plugins symlinks, new memory folders and the settings sync (= setup --relink)' \
         '  update [--dry-run]    fetch the latest claude-multi-setup.sh from GitHub and re-run setup' \
         '  sync [--force [slug]] copy the shared settings.json into every account, so bare claude after cuse gets the same permissions' \
+        '  link-default          give ~/.claude a link to every shared command, agent, skill and output style it lacks (cuse and the launchers do it too)' \
         '  help                  this table' \
         '' \
         "  launchers: claude-<slug> [args…] (or claude<slot>) run Claude Code as that account for one command." \
@@ -1241,6 +1334,8 @@ fi
 # API. CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_AUTH_TOKEN override the directory's login the same way.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 CLAUDE_CONFIG_DIR="\$dir"; export CLAUDE_CONFIG_DIR
+# §17: give the default account a link to every shared entry it lacks. Silent, and never in the way of the launch.
+[ -x "\$HOME/.claude-multi/$SCRIPT_NAME" ] && "\$HOME/.claude-multi/$SCRIPT_NAME" link-default >/dev/null 2>&1
 # Root options must precede any subcommand, and --settings sits right after the VARIADIC
 # --mcp-config so it terminates that list instead of a user argument being swallowed.
 exec "\$bin" --mcp-config "\$shared/mcp.json" --settings "\$shared/settings.json" "\$@"
@@ -1655,6 +1750,11 @@ summary() {
   else
     say "Shared plugins: not yet — $SEED_DIR/plugins does not exist (start plain claude once, then --relink)"
   fi
+  if default_links_enabled; then
+    say "Default account: $SEED_DIR gets a link to every shared command, agent, skill and output style it has no name for (setup, --relink, each launcher and cuse; nothing there is moved or changed)"
+  else
+    say "Default account: $SEED_DIR is not given links to new shared entries (CLAUDE_MULTI_DEFAULT_LINKS=0)"
+  fi
   say "Aliases: $ALIASES_FILE"
   say "rc file: $RC_STATE"
   say ""
@@ -1684,6 +1784,7 @@ cmd_status() {
   plugins_status_line
   memory_accounts ${REG_SLUGS[@]+"${REG_SLUGS[@]}"}
   memory_status_line
+  default_status_line
   if target=$(rc_found); then printf 'rc: sourced from %s\n' "$target"; else printf 'rc: not sourced (run --rc)\n'; fi
   settings_credential_warning "$SHARED_DIR/settings.json"
   settings_readblock_warning "$SHARED_DIR/settings.json" "the shared settings file"
@@ -1949,7 +2050,7 @@ parse_args() {
       -h | --help) usage; exit 0 ;;
       --version) printf '%s\n' "$VERSION"; exit 0 ;;
       -*) usage_err "unknown option: $1" ;;
-      setup | add | remove | status | login | update | sync)
+      setup | add | remove | status | login | update | sync | link-default)
         [ -z "$CMD" ] || usage_err "unexpected argument: $1"
         CMD=$1 ;;
       *)
@@ -1980,6 +2081,8 @@ parse_args() {
       [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "update only takes --dry-run" ;;
     sync)
       [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "sync only takes --force [slug], --merge-local and --dry-run" ;;
+    link-default)
+      [ "$RELINK" = 0 ] && [ "$RC_APPEND" = 0 ] || usage_err "link-default only takes --dry-run" ;;
   esac
   [ "$LOGIN_ALL" = 0 ] || [ "$CMD" = login ] || usage_err "--all only applies to login"
   [ "$VERIFY" = 0 ] || [ "$CMD" = status ] || usage_err "--verify only applies to status"
@@ -2009,10 +2112,17 @@ cmd_relink() {
     link_memory_into "$d"
     link_plugins_into "$d"
   done
+  link_shared_into_default
   # the two memory allow rules (§16.3) have to reach each account's own settings.json too, or bare `claude`
   # after `cuse` would still be asked: that is the settings step, so --relink runs it
   sync_all_settings relink
   say ""
+  if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
+}
+
+cmd_link_default() { # §17 on its own: what the launchers and cuse run. Touches nothing but the default account's links
+  if ! default_links_enabled; then say "Off: CLAUDE_MULTI_DEFAULT_LINKS=0."; return 0; fi
+  link_shared_into_default
   if [ "$CHANGES" = 0 ]; then say "No changes — everything was already in place."; else say "Done."; fi
 }
 
@@ -2061,6 +2171,7 @@ cmd_setup() { # also the second half of add / remove
     link_plugins_into "$ACCOUNTS_ROOT/${SLUGS[$i]}"
     i=$((i + 1))
   done
+  link_shared_into_default
   sync_all_settings setup
   write_registry
   write_aliases
@@ -2082,6 +2193,7 @@ main() {
   case "$CMD" in
     update) cmd_update; return $? ;;
     sync) cmd_sync; return $? ;;
+    link-default) cmd_link_default; return $? ;;
   esac
   if [ "$RELINK" = 1 ]; then cmd_relink; return 0; fi
   cmd_setup
