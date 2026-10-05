@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
-# + §16.9 (T12 rewritten, T28–T32)
+# + §16.9 (T12 rewritten, T28–T32) + §17.6 (T33)
 # for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
@@ -37,7 +37,7 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31 T32"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31 T32 T33"
 # §16.3: the two allow rules every settings file gains, so a memory write is pre-approved on both paths
 MEM_RULE_ACCT='Edit(~/.claude-accounts/*/projects/*/memory/**)'
 MEM_RULE_STORE='Edit(~/.claude-shared/memory/**)'
@@ -916,7 +916,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   assert_rc "status on a fresh HOME" 0
   assert_file_empty "status prints nothing on stderr" "$T/err"
   order_fresh=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins memory rc terminal next " "$order_fresh"
+  assert_eq "status key order (fresh HOME)" "script version cswap shared aliases settings plugins memory default rc terminal next " "$order_fresh"
   out_line "plugins: nothing registered yet" "plugins: 0 shared, 0 own, 0 pending"
   out_line "memory: no repo has memory yet" "memory: 0 shared, 0 still in ~/.claude, 0 in one account, 0 conflicts"
   out_line "cswap found" "cswap: found at $H/bin/cswap"
@@ -933,7 +933,7 @@ case_T16() { # status before setup, after setup, after a fake login, pinned, unm
   run_script -- status
   assert_rc "status after setup" 0
   order_setup=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order_setup"
+  assert_eq "status key order (4 accounts)" "script version cswap shared aliases settings plugins memory default rc terminal account account account account next " "$order_setup"
   out_line "plugins: every account linked" "plugins: 4 shared, 0 own, 0 pending"
   assert_true "script: names an existing file" test -f "$(sed -n 's/^script: //p' "$T/out")"
   out_matches "version: has a value" '^version: [^ ]'
@@ -1262,7 +1262,7 @@ case_T21() { # status --verify
   run_script -- status --verify
   assert_rc "status --verify" 0
   order=$(sed -n 's/^\([a-z]*\):.*/\1/p' "$T/out" | tr '\n' ' ')
-  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins memory rc terminal account account account account next " "$order"
+  assert_eq "status --verify key order" "script version cswap shared aliases settings plugins memory default rc terminal account account account account next " "$order"
   out_line "verified: alice NOT logged in (heuristic overruled)" "account: 1 alice alice@example.com not-logged-in (verified)"
   out_line "verified: hans-acme not logged in" "account: 2 hans-acme hans@acme.test not-logged-in (verified)"
   out_line "verified: info logged in (marker only)" "account: 3 info info@corp.test logged-in (verified)"
@@ -2042,6 +2042,142 @@ case_T32() { # §16.7 adoption: memory first created inside an account becomes t
   out_lacks "no move was made or reported" "  + move "
 }
 
+case_T33() { # §17 the default account follows the shared folders: a link for what it lacks and nothing else; prune; the off switch; launcher, cuse, re-seed
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  local sh="$H/.claude-shared" d="$H/.claude" bin="$H/.claude-multi/bin" tree lrc
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  out_has "summary names the default account" "Default account: $d gets a link"
+  assert_seed_untouched                                   # the shared folders hold nothing ~/.claude lacks yet
+  run_script -- status
+  out_line "status: nothing linked, nothing pending" "default: 0 linked, 0 pending"
+
+  # 1. entries added to the shared folders after the seeding: every account sees them, the default account does not
+  mkdir -p "$sh/skills/later" "$sh/skills/.hidden" "$sh/skills/with space"
+  printf 'later\n' > "$sh/skills/later/SKILL.md"
+  printf 'hidden\n' > "$sh/skills/.hidden/SKILL.md"
+  printf 'space\n' > "$sh/skills/with space/SKILL.md"
+  printf 'echo later\n' > "$sh/commands/later.md"
+  printf 'agent\n' > "$sh/agents/helper.md"               # ~/.claude has no agents/ at all
+  printf 'the shared demo, edited\n' > "$sh/skills/demo/SKILL.md"   # one name on both sides, two contents
+  ln -s "$d/skills/gone" "$sh/skills/gone"                # a shared entry that is a link back into ~/.claude, leading nowhere
+  : > "$sh/skills/.DS_Store"
+  cp "$d/skills/demo/SKILL.md" "$T/demo.before"
+  ( cd "$H" && find .claude | sort ) > "$T/tree.before"
+  run_script -- status
+  out_line "status: five pending" "default: 0 linked, 5 pending"
+  run_script -- link-default --dry-run
+  assert_rc "link-default --dry-run" 0
+  out_has "dry-run names the skill link" "[dry-run] would link $d/skills/later -> $sh/skills/later"
+  out_has "dry-run names the folder link" "[dry-run] would link $d/agents -> $sh/agents"
+  assert_absent "dry-run made no link" "$d/skills/later"
+  assert_absent "dry-run made no folder link" "$d/agents"
+
+  run_script -- link-default
+  assert_rc "link-default" 0
+  assert_file_empty "no warning" "$T/err"
+  assert_link_to "a later skill is linked" "$d/skills/later" "$sh/skills/later"
+  assert_link_to "a dot entry is linked" "$d/skills/.hidden" "$sh/skills/.hidden"
+  assert_link_to "a name with a space is linked" "$d/skills/with space" "$sh/skills/with space"
+  assert_link_to "a later command is linked" "$d/commands/later.md" "$sh/commands/later.md"
+  assert_link_to "a folder ~/.claude lacked is one link to the shared folder" "$d/agents" "$sh/agents"
+  assert_true "the linked skill reads through" test -f "$d/skills/later/SKILL.md"
+  assert_dir "a name ~/.claude already has stays its own folder" "$d/skills/demo"
+  assert_same_file "… with its own content" "$T/demo.before" "$d/skills/demo/SKILL.md"
+  assert_absent "a shared entry that leads nowhere is not linked" "$d/skills/gone"
+  assert_absent ".DS_Store is not linked" "$d/skills/.DS_Store"
+  assert_absent "an empty shared folder is not linked" "$d/output-styles"
+  assert_eq "exactly five change lines" "5" "$(count_matches "$T/out" '^  \+ link ')"
+  tree=$( { cat "$T/tree.before"; printf '%s\n' .claude/agents .claude/commands/later.md .claude/skills/.hidden \
+    '.claude/skills/with space' .claude/skills/later; } | sort )
+  assert_eq "~/.claude is the old tree plus the five links" "$tree" "$( cd "$H" && find .claude | sort )"
+  assert_same_file "~/.claude.json byte-identical" "$T/claude.json.seed" "$H/.claude.json"
+  run_script -- status
+  out_line "status: five linked" "default: 5 linked, 0 pending"
+  run_script -- link-default
+  out_line "a second pass is a no-op" "No changes — everything was already in place."
+  printf 'new\n' > "$d/agents/from-default.md"            # written on the default account, through the folder link
+  assert_exists "… it lands in the shared folder" "$sh/agents/from-default.md"
+  assert_exists "… and so in an account" "$H/.claude-accounts/alice/agents/from-default.md"
+
+  # 2. prune: the shared entry goes. Only a link this pass made, and only once it leads nowhere, is removed
+  rm -rf "$sh/skills/later"
+  ln -s "$T/nowhere" "$d/skills/users-own"                 # the user's own dangling link
+  ln -s "$sh/skills/renamed" "$d/skills/other-name"        # dangling, into the shared folder, under another name
+  run_script -- --relink
+  assert_rc "--relink after a shared skill was removed" 0
+  assert_absent "the link whose shared entry is gone was removed" "$d/skills/later"
+  out_has "the removal is a change line" "remove $d/skills/later"
+  assert_exists "the user's own dangling link is kept" "$d/skills/users-own"
+  assert_exists "a dangling link under another name is kept" "$d/skills/other-name"
+  assert_link_to "a link whose shared entry is there is kept" "$d/skills/.hidden" "$sh/skills/.hidden"
+
+  # 3. setup runs the pass; CLAUDE_MULTI_DEFAULT_LINKS=0 turns it off in setup, the verb and status
+  mkdir -p "$sh/skills/second"; printf 'second\n' > "$sh/skills/second/SKILL.md"
+  run_script CLAUDE_MULTI_DEFAULT_LINKS=0 "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "off: setup" 0
+  assert_absent "off: setup links nothing" "$d/skills/second"
+  out_has "off: the summary says so" "is not given links to new shared entries (CLAUDE_MULTI_DEFAULT_LINKS=0)"
+  run_script CLAUDE_MULTI_DEFAULT_LINKS=0 -- link-default
+  out_line "off: the verb says so" "Off: CLAUDE_MULTI_DEFAULT_LINKS=0."
+  assert_absent "off: the verb links nothing" "$d/skills/second"
+  run_script CLAUDE_MULTI_DEFAULT_LINKS=0 -- status
+  out_line "off: status says so" "default: off (CLAUDE_MULTI_DEFAULT_LINKS=0)"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  assert_link_to "setup links a later skill" "$d/skills/second" "$sh/skills/second"
+  run_script -- link-default --relink
+  assert_rc "link-default takes no --relink" 2
+
+  # 4. a launcher tops the default account up: silently, and it still launches. The off switch holds there too
+  mkdir -p "$sh/skills/third"; printf 'third\n' > "$sh/skills/third/SKILL.md"
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" "$bin/claude-alice" hello > "$T/launch.out" 2>&1
+  lrc=$?
+  assert_eq "launcher exit 0" "0" "$lrc"
+  assert_link_to "the launcher linked the new skill" "$d/skills/third" "$sh/skills/third"
+  assert_file_has "the launcher still ran claude as alice" "$T/launch.out" "CLAUDE_CONFIG_DIR=$H/.claude-accounts/alice"
+  assert_file_has "… with its argument" "$T/launch.out" "hello"
+  assert_file_lacks "the pass printed nothing into the launch" "$T/launch.out" "+ link"
+  mkdir -p "$sh/skills/fourth"; printf 'fourth\n' > "$sh/skills/fourth/SKILL.md"
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" CLAUDE_MULTI_DEFAULT_LINKS=0 "$bin/claude-alice" hello > /dev/null 2>&1
+  assert_absent "off: the launcher links nothing" "$d/skills/fourth"
+  mv "$H/.claude-multi/claude-multi-setup.sh" "$H/.claude-multi/claude-multi-setup.sh.away"
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" "$bin/claude-alice" hello > "$T/launch-bare.out" 2>&1
+  lrc=$?
+  assert_eq "the launcher runs without the installed script" "0" "$lrc"
+  assert_file_has "… and still launches" "$T/launch-bare.out" "hello"
+  mv "$H/.claude-multi/claude-multi-setup.sh.away" "$H/.claude-multi/claude-multi-setup.sh"
+
+  # 5. cuse runs it too, in bash and zsh, and prints nothing more than it did
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" TERM=dumb "$RUN_BASH" -c '. "$HOME/.claude-multi/aliases.sh"; cuse default' \
+    > "$T/cuse.out" 2>&1 < /dev/null
+  assert_link_to "cuse default linked the new skill (bash)" "$d/skills/fourth" "$sh/skills/fourth"
+  assert_eq "cuse default prints its one line" "This terminal: default (~/.claude)" "$(cat "$T/cuse.out")"
+  if [ -n "$ZSH_BIN" ]; then
+    mkdir -p "$sh/skills/fifth"; printf 'fifth\n' > "$sh/skills/fifth/SKILL.md"
+    env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" TERM=dumb "$ZSH_BIN" -f -c '. "$HOME/.claude-multi/aliases.sh"; cuse alice' \
+      > "$T/cuse-zsh.out" 2>&1 < /dev/null
+    assert_link_to "cuse <slug> linked the new skill (zsh)" "$d/skills/fifth" "$sh/skills/fifth"
+    assert_first_line "cuse <slug> still leads with its own line" "$T/cuse-zsh.out" \
+      "This terminal: alice (alice@example.com)  CLAUDE_CONFIG_DIR=$H/.claude-accounts/alice"
+    assert_file_lacks "… and shows nothing of the pass" "$T/cuse-zsh.out" "link"
+  else
+    ok "zsh not found: the zsh half of cuse skipped"
+  fi
+
+  # 6. a re-seed copies ~/.claude/skills with this pass's links in it: none may land in the shared folder pointing at itself
+  rm -rf "$sh/skills"
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup after the shared skills folder was removed" 0
+  assert_dir "the shared folder is seeded again" "$sh/skills"
+  assert_exists "the default account's own skill is copied" "$sh/skills/demo/SKILL.md"
+  assert_absent "a copied link that would point at itself is dropped" "$sh/skills/.hidden"
+  assert_absent "… and the default account's link to the vanished entry is pruned" "$d/skills/.hidden"
+  assert_exists "the user's own link is copied as it is" "$sh/skills/users-own"
+  assert_dir "the default account's own skill is still its own" "$d/skills/demo"
+}
+
 case_title() {
   case "$1" in
     T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
@@ -2050,6 +2186,7 @@ case_title() {
     T30) printf 'hand-migrated machine: links already point at the store' ;;
     T31) printf 'memory allow rules: shared file, account copies, modified copy, relink, no tools' ;;
     T32) printf 'adoption: memory first created inside an account becomes the shared folder' ;;
+    T33) printf 'the default account follows the shared folders: links only, prune, off switch, launcher and cuse' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -2108,8 +2245,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-9] | T3[0-2]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T32)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-9] | T3[0-3]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T33)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES

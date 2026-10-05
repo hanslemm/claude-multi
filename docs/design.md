@@ -38,7 +38,7 @@ Three facts shape everything below (verified against Claude Code 2.1.x):
 
 | Path | Owner | Purpose |
 |---|---|---|
-| `~/.claude` , `~/.claude.json` | the user / cswap | the DEFAULT account, read as the seed. Untouched, with one exception (v1.5, §16): a `projects/<p>/memory` folder is moved to the store below and replaced by a link to it |
+| `~/.claude` , `~/.claude.json` | the user / cswap | the DEFAULT account, read as the seed. Untouched, with two exceptions: a `projects/<p>/memory` folder is moved to the store below and replaced by a link to it (v1.5, §16), and a link is added for each shared command, agent, skill and output style it has no name for (v1.6, §17) |
 | `~/.claude-accounts/<slug>/` (mode 700) | the script creates; Claude Code fills | one `CLAUDE_CONFIG_DIR` per account; never deleted by the tool |
 | `~/.claude-shared/` | the script seeds ONCE; the user edits | `settings.json`, `mcp.json`, `CLAUDE.md`, `commands/`, `agents/`, `skills/`, `output-styles/` |
 | `~/.claude-shared/memory/<p>/` (v1.5, §16) | the script moves it there; Claude Code fills | the per-repo auto-memory folders: the real ones, one per project |
@@ -66,6 +66,10 @@ Sharing model:
   account has started Claude Code once), each account gets `plugins` as a symlink to it. One installed
   set, marketplace list and cache for every account; which plugins are enabled comes from
   `settings.json`, which is shared already. The canonical dir stays in `~/.claude`.
+- **The default account follows the shared folders (v1.6, §17)**: the seeding below is a one-time
+  copy, so an entry added to `~/.claude-shared/{commands,agents,skills,output-styles}` later reached
+  every account and never `~/.claude`. `~/.claude/<dir>` gets a symlink to each shared entry it has no
+  name for. Links are only added; nothing there is moved, overwritten or repointed.
 
 Seeding (`~/.claude-shared`, first run only, each item independently, never overwritten afterwards):
 `settings.json` = copy of `~/.claude/settings.json` (else `{}`); `mcp.json` = `{"mcpServers": …}`
@@ -83,11 +87,13 @@ claude-multi-setup.sh status [--verify]
 claude-multi-setup.sh login <slug|slot|email> | --all        (v1.1, §12)
 claude-multi-setup.sh update [--dry-run]                     (v1.1, §12)
 claude-multi-setup.sh sync [--force [<slug>]] [--merge-local] [--dry-run]   (v1.2, §13)
+claude-multi-setup.sh link-default [--dry-run]               (v1.6, §17)
 claude-multi-setup.sh --help | -h | --version
 ```
 
 - `setup` (default): discover accounts (§4), seed shared config, move per-repo memory into the store
-  (§16), create account dirs + symlinks + memory + plugins links, sync the settings (§13, §16.3), write
+  (§16), create account dirs + symlinks + memory + plugins links, add the default account's links
+  (§17), sync the settings (§13, §16.3), write
   `accounts.tsv`, generate `aliases.sh`, self-install, handle the rc line, print
   the summary. Idempotent: a re-run with nothing new prints `No changes — everything was already in
   place.` and leaves the filesystem byte-identical (mtimes included).
@@ -95,8 +101,10 @@ claude-multi-setup.sh --help | -h | --version
   `~/.claude-multi`.
 - `--relink`: only the links and what they need: the shared + memory + plugins symlinks inside the
   account dirs that already exist, the memory move of §16.2 (a repo that gained memory since the last
-  run), and the settings step (§13.1), so the memory allow rules of §16.3 reach every account. No
-  discovery, no aliases regeneration.
+  run), the default account's links (§17), and the settings step (§13.1), so the memory allow rules of
+  §16.3 reach every account. No discovery, no aliases regeneration.
+- `link-default`: the pass of §17 and nothing else. No discovery, no self-install, no `~/.claude-multi`
+  created. Takes `--dry-run` only.
 - `--rc` / `--rc=FILE`: append the source line (§7) to the rc file, once. Without the flag the rc
   file is NEVER touched; the summary prints the line to add instead.
 - `--no-input`: never prompt (the interactive email prompt in §4 step 4 is skipped; exit 1 with the
@@ -240,7 +248,7 @@ Contents:
 - Change lines: `  + <action>`; dry-run: `  [dry-run] would <action>`; warnings: `  warning: …` on
   stderr; the counter line `No changes — everything was already in place.` when nothing changed.
 - Summary (setup): `Accounts (source: <source>):` + one `  <slot>  claude-<slug>  <email>  <dir>`
-  line each; `Shared config: …`; `Shared memory: …`; `Shared plugins: …` (v1.3, §14); `Aliases: …`; `rc file: …`; then
+  line each; `Shared config: …`; `Shared memory: …`; `Shared plugins: …` (v1.3, §14); `Default account: …` (v1.6, §17.4); `Aliases: …`; `rc file: …`; then
   `One-time login, once per account …:` with `  claude-multi login <slug>  (<email>)` or
   `(already logged in)`.
 - `status` lines, each `key: value` on its own line, in this order: `script:`, `version:`, `cswap:`
@@ -248,6 +256,7 @@ Contents:
   `aliases:` (`ok <file>` | `missing`), `settings:` (`<n> in sync, <p> pending, <m> modified` — v1.2, §13),
   `plugins:` (`<n> shared, <o> own, <p> pending` | `<dir> missing (start plain claude once, then relink)` — v1.3, §14),
   `memory:` (`<n> shared, <m> still in ~/.claude, <a> in one account, <c> conflicts` — v1.5, §16.4),
+  `default:` (`<n> linked, <p> pending` | `off (CLAUDE_MULTI_DEFAULT_LINKS=0)` | `<dir> missing` — v1.6, §17.4),
   `rc:` (`sourced from <file>` | `not sourced (run --rc)`),
   `terminal:` (`default` | `<slug> (<email>)` | `unmanaged <dir>`), then
   `account: <slot> <slug> <email> <logged-in|not-logged-in>` per registered account, then
@@ -260,15 +269,20 @@ Never delete an account dir · never overwrite a seeded shared file · never mod
 `~/.claude.json` · never touch an rc file without `--rc` · never leave the cswap export on disk ·
 never migrate or copy credentials · never print tokens · a re-run with nothing new changes nothing.
 
-Two of these carry an exception, each stated where it is made:
+Two of these carry exceptions, each stated where it is made:
 
 - **`~/.claude` (v1.5, §16).** `setup` and `--relink` move each `~/.claude/projects/<p>/memory` folder
   to `~/.claude-shared/memory/<p>` and leave a symlink to it in its place. It is the first and only
-  thing the tool moves out of `~/.claude`; nothing else there is written, and `~/.claude.json` is still
-  never touched. A memory folder first created inside an account dir is moved to the store the same
+  thing the tool moves out of `~/.claude`, and `~/.claude.json` is still never touched. A memory folder first created inside an account dir is moved to the store the same
   way (§16.7); the account dir itself is still never deleted. Around both moves: never delete or
   overwrite memory · never merge two non-empty memory folders · roll the move back when the link cannot
   be made. The undo is one `mv` per project (§16.5).
+- **`~/.claude` again (v1.6, §17).** `setup`, `--relink`, `link-default`, every launcher and `cuse`
+  add a symlink in `~/.claude/{commands,agents,skills,output-styles}` for each shared entry that has no
+  name there (or one link for a whole folder `~/.claude` does not have). Around it: never move, overwrite
+  or repoint anything in `~/.claude` · never touch a name that exists there, whatever it holds · remove
+  one thing only, a link this pass made that leads nowhere. The undo is `rm` of the link (§17.5), and
+  `CLAUDE_MULTI_DEFAULT_LINKS=0` turns the pass off.
 - **The shared `settings.json`.** The tool only ever adds to it, and only two things: the keys of
   `settings.local.json` (§13.2) and the two memory allow rules (§16.3). Nothing the user wrote there is
   changed or removed.
@@ -851,3 +865,113 @@ T1–T3 assert the shared `settings.json` as "the seed plus the two rules", T16 
 and its place in the order.
 
 Version: 1.5.0 everywhere.
+
+## 17. v1.6 — the default account follows the shared folders
+
+Measured 2026-10-05 (Claude Code 2.1.289): a plugin written into the skills folder from an account
+session (an account's `skills/` is `~/.claude-shared/skills/`) was listed by `claude plugin list` as
+loaded under each of four accounts, and `~/.claude/skills` had no entry of that name. The cause is the
+seeding of §2: `~/.claude-shared/<dir>`
+is a one-time copy of `~/.claude/<dir>`, every account dir links to the shared folder itself, and nothing
+ever goes back. A month after the seeding, the shared skills folder on that machine held five entries
+`~/.claude/skills` did not, so plain `claude` ran without them. Each one could be fixed with an `ln -s`
+by hand; the point of this section is that nobody has to remember to.
+
+### 17.1 The pass
+
+For each of `commands`, `agents`, `skills`, `output-styles`, with `S` = `~/.claude-shared/<dir>` and
+`D` = `~/.claude/<dir>`:
+
+| `D` | `S` | The pass |
+|---|---|---|
+| a real directory | has entries | for each entry of `S` whose name `D` does not have: `D/<name>` → `S/<name>` (absolute target). A name that exists in `D` (file, directory or symlink, a dangling one included) is left alone, whatever it holds |
+| absent | has entries | one link `D` → `S`, as in an account dir |
+| absent | empty | nothing |
+| a symlink, to anywhere | any | nothing: the folder link of the row above, or the user's own arrangement |
+| a plain file | any | nothing |
+
+Skipped entries of `S`: `.DS_Store`, and any entry that leads nowhere. The second rule is also what
+prevents a loop: a shared entry can itself be a link back into `D` (a skill installed on the default
+account and linked into the shared folder by hand); when that name is missing in `D` the entry is
+dangling, and linking it would make the two point at each other.
+
+Prune: an entry of `D` that is a symlink, leads nowhere, and whose target text is exactly
+`S/<its own name>` is removed. That is a link this pass made whose shared entry has since been deleted.
+The user's own dangling links, and a link into `S` under another name, are kept. Nothing else in
+`~/.claude` is ever removed.
+
+One direction only. An entry that exists only in `D` stays there and is not offered to the accounts;
+adding links to the shared folder would change what every account loads, which is the user's call.
+Through the folder link of the second row the two are one folder, so there the question does not arise.
+
+Why a link per entry and not `D` → `S` for a real directory: the two folders have drifted since the
+copy (on the measured machine: five names only in `S`, one only in `D`, three duplicated with equal
+content, one name with different content on each side). One link for the folder needs a merge and a
+move out of `~/.claude`, with a conflict state the user resolves by hand, as §16 has for memory. A
+link per entry needs no merge, cannot conflict and is undone with `rm`.
+
+`CLAUDE.md` is not part of it: it is one file, the default account has its own, and there is no
+"missing name" to fill. `settings.json` and `mcp.json` are not symlinked anywhere (§2).
+
+A re-seed (the user removed `~/.claude-shared/<dir>` and ran setup) copies `D` with these links in it.
+A copied link whose target is its own path in the new `S` is dropped right after the copy; the pass
+then prunes its counterpart in `D`.
+
+### 17.2 When it runs
+
+- `setup` and `--relink` (so `add`, `remove` and `update` too), after the account links.
+- `link-default [--dry-run]`: the pass alone.
+- Every launcher, before it execs `claude`: `~/.claude-multi/claude-multi-setup.sh link-default` with
+  its output discarded and its exit status ignored. A launcher works when that file is missing.
+- `cuse`, for any target (`default` included), the same way.
+
+The last two are what make it need nobody: a shared entry added today is in the default account the
+next time any account is started or any terminal is pinned. What is left: plain `claude` in a terminal
+where neither happened since the entry was added runs without it once. Sourcing `aliases.sh` does not
+run the pass; a file-system write at every shell start is not something an rc line should do.
+
+Cost: one bash start and a few `test` calls per shared entry. Ten dry-run passes took 0.28 s on the
+measured machine (27 shared skills, five of them to link), about 30 ms a launch.
+
+### 17.3 The switch
+
+`CLAUDE_MULTI_DEFAULT_LINKS=0` in the environment turns the pass off everywhere it is called: setup,
+`--relink`, the verb (`Off: CLAUDE_MULTI_DEFAULT_LINKS=0.`), the launchers and `cuse`. Existing links
+stay; nothing is undone.
+
+### 17.4 Output
+
+Change lines: `link <D>/<name> -> <S>/<name>`, `link <D> -> <S>`, `remove <D>/<name> (the shared entry it
+pointed at is gone)`. A link that cannot be made is a warning naming both paths, never an error: setup
+goes on. Summary: `Default account: ~/.claude gets a link to every shared command, agent, skill and
+output style it has no name for (…)`, or `… is not given links to new shared entries
+(CLAUDE_MULTI_DEFAULT_LINKS=0)`. `status`, between `memory:` and `rc:`: `default: <n> linked, <p>
+pending` (linked = entries of the shared folders the default account reaches through a link of this
+pass, the entries of a folder-linked directory included; pending = entries with no name there yet,
+linked by the next pass), or `default: off (CLAUDE_MULTI_DEFAULT_LINKS=0)`, or `default: <dir> missing`.
+A name the default account holds itself is counted in neither.
+
+### 17.5 Undo, and what it gives up
+
+Undo: `rm` the link. `find ~/.claude/commands ~/.claude/agents ~/.claude/skills ~/.claude/output-styles
+-maxdepth 1 -type l -lname "$HOME/.claude-shared/*"` lists them, and with the switch of §17.3 set they
+are not made again.
+
+What it gives up:
+
+- §9's "never modify `~/.claude`" has a second exception, and this one runs at every launch.
+- The default account now depends on `~/.claude-shared` for the entries it only has through a link:
+  remove that folder and they are gone. The README's uninstall moves them back first.
+- A name on both sides with different content is not reconciled. The default account keeps its own
+  version and the accounts keep the shared one, as before v1.6.
+
+### 17.6 Tests
+
+| # | Case | Asserts |
+|---|---|---|
+| T33 | shared entries added after the seeding: three skills (one a dot name, one with a space), a command, an agent while `~/.claude/agents` is absent; one name with different content on both sides; a shared entry that links back into `~/.claude` and leads nowhere; `.DS_Store` | `status` counts five pending; `link-default --dry-run` names the links and makes none; `link-default` makes exactly five (the agent as one folder link), leaves the same-name skill a real directory with its own content, links neither the dangling entry nor `.DS_Store` nor an empty shared folder, and `~/.claude` is the old tree plus the five links; `status` counts five linked; a second pass is a no-op; a file written through the folder link is in the shared folder and in an account. Prune: after the shared skill is deleted `--relink` removes that link and keeps the user's own dangling link and a dangling link under another name. The switch: setup, the verb and `status` do nothing and say so; `link-default --relink` is a usage error. A launcher run links a new skill, prints nothing of it and still launches; with the switch it links nothing; without the installed script it still launches. `cuse default` (bash) and `cuse <slug>` (zsh) link a new skill and print only their own lines. A re-seed drops the copied self-link and prunes its counterpart |
+
+T16 and T21 assert the `default:` line's place in the order. Every earlier case still passes its
+`~/.claude` untouched assertion: a fresh seeding leaves nothing for the pass to link.
+
+Version: 1.6.0 everywhere.
