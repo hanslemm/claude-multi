@@ -66,7 +66,10 @@ never copies a login.
 
 `claude-multi` is a shell function defined in `aliases.sh`, so it needs a sourced terminal; the
 long form `~/.claude-multi/claude-multi-setup.sh <verb>` works everywhere except for `use` and `who`,
-which have to run in your shell to change it.
+which have to run in your shell to change it. A shell that inherited the functions without the rest of
+that file is covered too: `claude-multi`, `cuse`, `cwho` and `claude-<slug>` load `aliases.sh` themselves
+when their parts are missing. Claude Code's own shell is one, so `! claude-multi status` typed inside a
+session works.
 
 `cswap` is optional: if it is in `PATH` its account list is discovered; otherwise the script asks for
 emails, or takes them from `add <email>` or the `ACCOUNT_ROWS` environment variable.
@@ -366,7 +369,7 @@ the default account keeps working.
 
 ## Development
 
-- `tests/harness.sh` — the test matrix (T1–T33 in the contract); builds a throwaway `HOME` per case
+- `tests/harness.sh` — the test matrix (T1–T34 in the contract); builds a throwaway `HOME` per case
   with a stub `claude` and a stub `cswap`. Run it with `/bin/bash tests/harness.sh` (bash 3.2 on
   macOS) and with `bash tests/harness.sh`.
 - CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -S warning -s bash` on the script and

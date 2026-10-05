@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/harness.sh — the test matrix of docs/design.md §10 (T1–T18) + §12.6 (T19–T23) + §13.4 (T24–T25) + §14.3 (T26) + §15.3 (T27)
-# + §16.9 (T12 rewritten, T28–T32) + §17.6 (T33)
+# + §16.9 (T12 rewritten, T28–T32) + §17.6 (T33) + §18 (T34)
 # for claude-multi-setup.sh.
 #
 # Usage:  [SCRIPT=<path>] [TEST_BASH=<bash>] [KEEP=1] tests/harness.sh [T1 T2 …]
@@ -37,7 +37,7 @@ NL=$(printf '\nx'); NL=${NL%x}
 RC_LINE='[ -f "$HOME/.claude-multi/aliases.sh" ] && . "$HOME/.claude-multi/aliases.sh"'
 V1_RC_LINE='[ -f "$HOME/.claude-multi/aliases.zsh" ] && source "$HOME/.claude-multi/aliases.zsh"'
 SHARED_NAMES="CLAUDE.md commands agents skills output-styles"
-ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31 T32 T33"
+ALL_CASES="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 T24 T25 T26 T27 T28 T29 T30 T31 T32 T33 T34"
 # §16.3: the two allow rules every settings file gains, so a memory write is pre-approved on both paths
 MEM_RULE_ACCT='Edit(~/.claude-accounts/*/projects/*/memory/**)'
 MEM_RULE_STORE='Edit(~/.claude-shared/memory/**)'
@@ -50,6 +50,7 @@ FIX=""        # fixture dir (stub payloads), created once
 T=""          # per-case scratch dir; HOME is $T/home
 H=""          # per-case HOME
 KEPT_DIRS=""
+VERSION_UNDER_TEST=""   # T34: what --version must print
 
 # ---------- assertion primitives (only ever print one `  ok:` / `  FAIL:` line) ----------
 ok()   { printf '  ok: %s\n' "$*"; }
@@ -2178,6 +2179,85 @@ case_T33() { # §17 the default account follows the shared folders: a link for w
   assert_dir "the default account's own skill is still its own" "$d/skills/demo"
 }
 
+t34_run_shell() { # label shell args… → probe dir $T/s-<label>
+  local label=$1; shift
+  local P="$T/s-$label"
+  mkdir -p "$P"
+  env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" P="$P" TERM=dumb "$@" "$(cat "$T/t34-driver.sh")" \
+    > "$P/shell.out" 2> "$P/shell.err" < /dev/null
+  printf '%s\n' "$?" > "$P/shell.rc"
+}
+t34_assert_shell() { # label
+  local label=$1 P="$T/s-$1"
+  assert_eq "$label: the driver ran to its end" "0" "$(cat "$P/shell.rc" 2>/dev/null)"
+  assert_ne "$label: the helpers are gone before each call" "0" "$(cat "$P/forgot.rc" 2>/dev/null)"
+  assert_eq "$label: … and the variables" "<unset>" "$(cat "$P/forgot.var" 2>/dev/null)"
+  assert_eq "$label: claude-multi --version" "0 $VERSION_UNDER_TEST" "$(cat "$P/version.rc") $(cat "$P/version.out")"
+  assert_file_empty "$label: … with nothing on stderr" "$P/version.err"
+  assert_eq "$label: claude-multi status: exit 0" "0" "$(cat "$P/status.rc")"
+  assert_file_line "$label: … it reached the installed script" "$P/status.out" "version: $VERSION_UNDER_TEST"
+  assert_file_empty "$label: … with nothing on stderr" "$P/status.err"
+  assert_eq "$label: cwho: exit 0" "0" "$(cat "$P/cwho.rc")"
+  assert_first_line "$label: … it knows the terminal" "$P/cwho.out" "This terminal: default — ~/.claude (whatever the default login is)"
+  assert_file_has "$label: … and lists the accounts" "$P/cwho.out" "claude-alice"
+  assert_file_empty "$label: … with nothing on stderr" "$P/cwho.err"
+  assert_eq "$label: cuse alice: exit 0" "0" "$(cat "$P/cuse.rc")"
+  assert_eq "$label: … it pinned the terminal" "$H/.claude-accounts/alice" "$(cat "$P/cuse.cfg")"
+  assert_file_empty "$label: … with nothing on stderr" "$P/cuse.err"
+  assert_eq "$label: claude-alice: exit 0" "0" "$(cat "$P/launch.rc")"
+  assert_file_has "$label: … it ran claude as alice" "$P/launch.out" "CLAUDE_CONFIG_DIR=$H/.claude-accounts/alice"
+  assert_file_has "$label: … with its argument" "$P/launch.out" "hello"
+  assert_file_empty "$label: … with nothing on stderr" "$P/launch.err"
+  assert_eq "$label: cuse default" "0 This terminal: default (~/.claude)" "$(cat "$P/default.rc") $(cat "$P/default.out")"
+  assert_eq "$label: without aliases.sh the entry point fails" "1" "$(cat "$P/gone.rc")"
+  assert_file_has "$label: … and names the file" "$P/gone.err" "aliases.sh"
+  assert_file_empty "$label: … and prints nothing else" "$P/gone.out"
+  assert_exists "$label: … and the shell lives on" "$P/alive"
+}
+case_T34() { # §18 a shell that holds the public functions of aliases.sh and nothing else: every entry point loads the file first
+  local rows="1${TAB}alice@example.com${NL}2${TAB}bob@example.com"
+  local a="$H/.claude-multi/aliases.sh"
+  set_cswap absent
+  run_script "ACCOUNT_ROWS=$rows" -- setup
+  assert_rc "setup" 0
+  VERSION_UNDER_TEST=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$SCRIPT" | head -n 1)
+  assert_eq "the load line is in every entry point: cuse, cwho, claude-multi, one per account" "5" \
+    "$(grep -c 'command -v _claude_multi_run' "$a")"
+  # What a snapshot of a sourced shell keeps: the public functions and the aliases. `forget` takes away the rest
+  # (the plain variables, the helpers whose names start with an underscore) before every single call.
+  cat > "$T/t34-driver.sh" <<'EOF'
+. "$HOME/.claude-multi/aliases.sh"
+forget() {
+  local f
+  for f in $(typeset -f | sed -n 's/^\(_claude_multi_[a-z_]*\) *().*/\1/p'); do unset -f "$f"; done
+  unset CLAUDE_MULTI_ACCOUNTS_ROOT CLAUDE_MULTI_SHARED_DIR CLAUDE_MULTI_SETUP CLAUDE_MULTI_BIN_DIR
+}
+forget
+type _claude_multi_run > "$P/forgot.out" 2>&1; echo $? > "$P/forgot.rc"
+printf '%s\n' "${CLAUDE_MULTI_SETUP-<unset>}" > "$P/forgot.var"
+claude-multi --version > "$P/version.out" 2> "$P/version.err"; echo $? > "$P/version.rc"
+forget; claude-multi status > "$P/status.out" 2> "$P/status.err"; echo $? > "$P/status.rc"
+forget; cwho > "$P/cwho.out" 2> "$P/cwho.err"; echo $? > "$P/cwho.rc"
+forget; cuse alice > "$P/cuse.out" 2> "$P/cuse.err"; echo $? > "$P/cuse.rc"
+printf '%s\n' "${CLAUDE_CONFIG_DIR-<unset>}" > "$P/cuse.cfg"
+forget; claude-alice hello > "$P/launch.out" 2> "$P/launch.err"; echo $? > "$P/launch.rc"
+forget; cuse default > "$P/default.out" 2> "$P/default.err"; echo $? > "$P/default.rc"
+mv "$HOME/.claude-multi/aliases.sh" "$HOME/.claude-multi/aliases.sh.away"
+forget; claude-multi status > "$P/gone.out" 2> "$P/gone.err"; echo $? > "$P/gone.rc"
+mv "$HOME/.claude-multi/aliases.sh.away" "$HOME/.claude-multi/aliases.sh"
+echo alive > "$P/alive"
+exit 0
+EOF
+  t34_run_shell bash "$RUN_BASH" -c
+  t34_assert_shell bash
+  if [ -n "$ZSH_BIN" ]; then
+    t34_run_shell zsh "$ZSH_BIN" -f -c
+    t34_assert_shell zsh
+  else
+    ok "zsh not found: the zsh half skipped"
+  fi
+}
+
 case_title() {
   case "$1" in
     T27) printf 'executable launchers: real files, function delegates, remove prunes' ;;
@@ -2187,6 +2267,7 @@ case_title() {
     T31) printf 'memory allow rules: shared file, account copies, modified copy, relink, no tools' ;;
     T32) printf 'adoption: memory first created inside an account becomes the shared folder' ;;
     T33) printf 'the default account follows the shared folders: links only, prune, off switch, launcher and cuse' ;;
+    T34) printf 'a shell with the public functions and nothing else of aliases.sh: every entry point loads the file' ;;
     T1) printf 'cswap list --json (4 accounts, two share local part hans)' ;;
     T2) printf 'export-only cswap (list --json fails)' ;;
     T3) printf 'ANSI-only cswap (scraped listing)' ;;
@@ -2245,8 +2326,8 @@ main() {
   for c in "$@"; do
     case "$c" in
       -h | --help) usage; exit 0 ;;
-      T[0-9] | T1[0-9] | T2[0-9] | T3[0-3]) cases="$cases $c" ;;
-      *) printf 'harness: unknown case %s (T1..T33)\n' "$c" >&2; exit 2 ;;
+      T[0-9] | T1[0-9] | T2[0-9] | T3[0-4]) cases="$cases $c" ;;
+      *) printf 'harness: unknown case %s (T1..T34)\n' "$c" >&2; exit 2 ;;
     esac
   done
   [ -n "$cases" ] || cases=$ALL_CASES
