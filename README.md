@@ -327,23 +327,26 @@ data; delete it when you no longer want it. Until the default account has starte
    ```sh
    for d in "$HOME"/.claude-shared/memory/*/; do
      d=${d%/}; l="$HOME/.claude/projects/${d##*/}/memory"
-     [ -L "$l" ] && rm "$l"                    # the link the tool left behind
+     [ -L "$l" ] && rm "$l"
      [ -e "$l" ] || { mkdir -p "${l%/memory}" && mv "$d" "$l"; }
    done
    ```
 
-   Anything still in `~/.claude-shared/memory/` afterwards was not moved (a real folder was already in
+   Each round removes the link the tool left behind, then moves the folder back. (The snippets here
+   carry no `#` comments on purpose: an interactive zsh passes the words after a `#` on as arguments
+   unless `interactivecomments` is set.) Anything still in `~/.claude-shared/memory/` afterwards was not moved (a real folder was already in
    the way); look at it before the next step. The accounts' own `projects/<p>/memory` links now point
    at nothing; they go away with the account dirs in step 6.
 4. **Move back what the default account only has through a link.** Since v1.6 `~/.claude/skills` (and
    `commands`, `agents`, `output-styles`) may hold links into `~/.claude-shared` for entries that were
-   added there. This puts the real entry where each link is:
+   added there. This puts the real entry where each link is: a folder that is one link as a whole
+   first, then the links inside a real folder:
 
    ```sh
    for n in commands agents skills output-styles; do
      s="$HOME/.claude-shared/$n"; l="$HOME/.claude/$n"
      if [ -L "$l" ]; then
-       [ "$(readlink "$l")" = "$s" ] && rm "$l" && mv "$s" "$l"   # the whole folder was one link
+       [ "$(readlink "$l")" = "$s" ] && rm "$l" && mv "$s" "$l"
        continue
      fi
      find "$l" -maxdepth 1 -type l -lname "$s/*" 2>/dev/null | while IFS= read -r e; do
@@ -363,7 +366,7 @@ the default account keeps working.
 
 ## Development
 
-- `tests/harness.sh` — the test matrix (T1–T31 in the contract); builds a throwaway `HOME` per case
+- `tests/harness.sh` — the test matrix (T1–T33 in the contract); builds a throwaway `HOME` per case
   with a stub `claude` and a stub `cswap`. Run it with `/bin/bash tests/harness.sh` (bash 3.2 on
   macOS) and with `bash tests/harness.sh`.
 - CI (`.github/workflows/ci.yml`): macOS + Ubuntu, `bash -n`, `shellcheck -S warning -s bash` on the script and
