@@ -975,3 +975,52 @@ T16 and T21 assert the `default:` line's place in the order. Every earlier case 
 `~/.claude` untouched assertion: a fresh seeding leaves nothing for the pass to link.
 
 Version: 1.6.0 everywhere.
+
+## 18. v1.6.1 — the functions load what they need
+
+Measured 2026-10-06 (Claude Code 2.1.290): Claude Code runs its Bash tool, and a command typed with `!`,
+in a shell built from a snapshot of the user's interactive shell. Of `aliases.sh` the snapshot holds the
+functions with public names (`claude-multi`, `cuse`, `cwho`, each `claude-<slug>`), the `claude<N>`
+aliases and the exported `PATH`. It holds neither the plain variables (`CLAUDE_MULTI_SETUP`,
+`CLAUDE_MULTI_BIN_DIR`, `CLAUDE_MULTI_ACCOUNTS_ROOT`) nor the functions whose names start with an
+underscore. So inside a session every entry point was there and none of them worked:
+
+| Typed | Got |
+|---|---|
+| `claude-multi update` | `claude-multi:  is missing — re-run the setup script (or install.sh)`: the path is the unset variable |
+| `claude-<slug> …` | `command not found: _claude_multi_run`, although the launcher file is on `PATH`: the function shadows it |
+| `cwho` | two `command not found` lines, and `not managed by claude-multi` for a terminal that is |
+| `cuse <slug>` | `command not found: _claude_multi_find`, and nothing pinned |
+
+The long form `~/.claude-multi/claude-multi-setup.sh <verb>` worked throughout, which is how the first row
+was got past.
+
+### 18.1 The line
+
+`cuse`, `cwho`, `claude-multi` and every `claude-<slug>` begin with:
+
+```sh
+{ [ -n "${CLAUDE_MULTI_SETUP:-}" ] && command -v _claude_multi_run >/dev/null 2>&1; } || . "$HOME/.claude-multi/aliases.sh" || return 1
+```
+
+When the variable is empty or the helper is not a command the shell knows, the function sources
+`~/.claude-multi/aliases.sh` (the stable path of §7) and goes on. That redefines the function while it
+runs, which bash and zsh both allow: the running body finishes as it was. With the file missing, `.`
+reports the path and the function returns 1; the shell is not left. In a shell that sourced the file
+the line is two tests and loads nothing.
+
+Both conditions are tested because either half can be missing without the other. Not chosen: exporting
+the variables (an exported variable reaches a child process, not a shell rebuilt from a snapshot, and
+the helpers would still be gone), and renaming the helpers so that a snapshot keeps them (which names
+one tool's snapshot keeps is that tool's rule; the line assumes nothing about it).
+
+The generator holds the line once, for the per-account functions; in the three functions of the quoted
+heredoc it is written out. T34 counts it: three plus one per account.
+
+### 18.2 Tests
+
+| # | Case | Asserts |
+|---|---|---|
+| T34 | a shell sources `aliases.sh`; before every call a `forget` unsets the four `CLAUDE_MULTI_*` variables and every `_claude_multi_*` function; bash and zsh | the helpers and the variable are gone; `claude-multi --version` prints the version, `claude-multi status` reaches the installed script, `cwho` names the terminal and lists the accounts, `cuse <slug>` pins it, `claude-<slug> hello` runs claude as that account with its argument, `cuse default` unpins, each with exit 0 and nothing on stderr; with `aliases.sh` moved away `claude-multi status` exits 1, names the file, prints nothing else, and the shell runs on. Run against the 1.6.0 script the case fails with the four messages of the table above |
+
+Version: 1.6.1 everywhere.

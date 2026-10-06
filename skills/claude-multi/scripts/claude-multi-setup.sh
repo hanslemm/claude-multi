@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claude-multi-setup.sh — one Claude Code login per terminal.
 #
-# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12–§17 of it).
+# Contract: docs/design.md in the claude-multi repository (this file implements §2–§9 and §12–§18 of it).
 #
 # Produces:
 #   ~/.claude-accounts/<slug>/          one CLAUDE_CONFIG_DIR per account (own login, own Keychain entry, own
@@ -51,7 +51,7 @@
 # shellcheck disable=SC2004,SC2016,SC2018,SC2019  # $i in indices is deliberate (bash 3.2 style); literal-$ strings are intended
 set -u
 
-VERSION="1.6.0"
+VERSION="1.6.1"
 SCRIPT_NAME="claude-multi-setup.sh"
 
 [ -n "${HOME:-}" ] || { printf 'error: HOME is not set\n' >&2; exit 1; }
@@ -1096,6 +1096,13 @@ write_registry() {
 }
 
 # ---------- aliases.sh (§6): one file for zsh and bash, no arrays, printf only ----------
+# §18: a shell can hold the public functions of aliases.sh and nothing else of it. Claude Code builds the shell its
+# tools run in from a snapshot of the user's: the functions and aliases come along, the plain variables and the
+# helpers whose names start with an underscore do not. So every entry point (cuse, cwho, claude-multi and each
+# claude-<slug>) begins by loading aliases.sh when its variables or helpers are missing. The same line stands in
+# the three functions of the BODY below, written out because that heredoc is quoted; T34 counts them.
+ALIASES_LOAD='{ [ -n "${CLAUDE_MULTI_SETUP:-}" ] && command -v _claude_multi_run >/dev/null 2>&1; } || . "$HOME/.claude-multi/aliases.sh" || return 1'
+
 gen_aliases() { # → stdout
   local i slugw=6 emailw=8 v
   i=0
@@ -1125,6 +1132,9 @@ gen_aliases() { # → stdout
 #
 # cuse also exports CLAUDE_MULTI_ACCOUNT=<slug> (for a prompt: \${CLAUDE_MULTI_ACCOUNT:+[\$CLAUDE_MULTI_ACCOUNT] });
 # cuse default unsets it. Sourcing this file sets neither variable.
+#
+# cuse, cwho, claude-multi and every claude-<slug> load this file first when its variables or helpers are missing:
+# a shell can inherit those functions without the rest of it (Claude Code's own tool shell does).
 
 CLAUDE_MULTI_ACCOUNTS_ROOT="\$HOME/.claude-accounts"
 CLAUDE_MULTI_SHARED_DIR="\$HOME/.claude-shared"
@@ -1209,6 +1219,7 @@ _claude_multi_follow() {
 
 cuse() { # <slug|slot|default>
   local want="${1:-}" line rest slot slug email
+  { [ -n "${CLAUDE_MULTI_SETUP:-}" ] && command -v _claude_multi_run >/dev/null 2>&1; } || . "$HOME/.claude-multi/aliases.sh" || return 1
   if [ -z "$want" ]; then
     printf '%s\n' 'usage: cuse <slug|slot|default>' >&2
     _claude_multi_list >&2
@@ -1239,6 +1250,7 @@ cuse() { # <slug|slot|default>
 
 cwho() {
   local cur="${CLAUDE_CONFIG_DIR:-}" line rest slug email
+  { [ -n "${CLAUDE_MULTI_SETUP:-}" ] && command -v _claude_multi_run >/dev/null 2>&1; } || . "$HOME/.claude-multi/aliases.sh" || return 1
   case "$cur" in
     '')
       printf '%s\n' 'This terminal: default — ~/.claude (whatever the default login is)' ;;
@@ -1261,6 +1273,7 @@ cwho() {
 
 claude-multi() { # <verb> [args…] — a function, so `use` can change THIS shell's environment
   local verb="${1:-help}"
+  { [ -n "${CLAUDE_MULTI_SETUP:-}" ] && command -v _claude_multi_run >/dev/null 2>&1; } || . "$HOME/.claude-multi/aliases.sh" || return 1
   case "$verb" in
     use) shift; cuse "$@" ;;
     who) cwho ;;
@@ -1299,7 +1312,7 @@ claude-multi() { # <verb> [args…] — a function, so `use` can change THIS she
 BODY
   i=0
   while [ $i -lt ${#SLUGS[@]} ]; do
-    printf 'claude-%s() { _claude_multi_run %s "$@"; }\n' "${SLUGS[$i]}" "${SLUGS[$i]}"
+    printf 'claude-%s() { %s; _claude_multi_run %s "$@"; }\n' "${SLUGS[$i]}" "$ALIASES_LOAD" "${SLUGS[$i]}"
     i=$((i + 1))
   done
   i=0
